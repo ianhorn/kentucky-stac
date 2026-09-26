@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.venv/
+.ruff_cache/
+.pytest_cache/
+dist/
+*.zip
+kentucky_stac/ext_libs/
+.claude/settings.local.json
