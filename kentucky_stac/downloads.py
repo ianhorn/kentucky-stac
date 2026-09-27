@@ -26,6 +26,7 @@ class DownloadJob:
     name: str  # tile id, for messages
     url: str
     dest: str  # final path; written as dest + ".part" and renamed when complete
+    bbox: Optional[Tuple[float, float, float, float]] = None  # the tile's lon/lat footprint from the catalog
 
 
 def filename_from_href(href: str) -> str:
@@ -44,7 +45,8 @@ def plan_downloads(items: Iterable[Item], lidar: bool, folder: str) -> Tuple[Lis
             missing.append(item)
             continue
         dest = os.path.join(folder, filename_from_href(asset.href))
-        jobs.setdefault(dest, DownloadJob(item.id, asset.href, dest))
+        bbox = tuple(float(v) for v in item.bbox[:4]) if item.bbox and len(item.bbox) >= 4 else None
+        jobs.setdefault(dest, DownloadJob(item.id, asset.href, dest, bbox))
     return list(jobs.values()), missing
 
 

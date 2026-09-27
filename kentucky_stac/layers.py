@@ -9,15 +9,18 @@ from __future__ import annotations
 import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Callable, Iterable, List, Optional, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 from qgis.core import (
     QgsApplication,
     QgsCoordinateReferenceSystem,
+    QgsCoordinateTransform,
+    QgsCoordinateTransformContext,
     QgsMapLayer,
     QgsPointCloudLayer,
     QgsProject,
     QgsRasterLayer,
+    QgsRectangle,
     QgsTask,
 )
 
@@ -29,11 +32,15 @@ GROUP_NAME = "Ky STAC"
 MAX_WORKERS = 4
 
 
+Bbox = Tuple[float, float, float, float]  # minx, miny, maxx, maxy in lon/lat
+
+
 @dataclass(frozen=True)
 class LayerSpec:
     name: str
     uri: str
     provider: str  # "gdal" (raster), "copc" (COPC point cloud) or "pdal" (plain LAZ/LAS point cloud)
+    bbox: Optional[Bbox] = None  # where the catalog says the tile is, used to catch a wrong CRS
 
 
 def raster_uri(href: str) -> str:
@@ -48,21 +55,29 @@ def layer_specs(items: Iterable[Item], lidar: bool) -> Tuple[List[LayerSpec], Li
     skipped: List[Item] = []
     for item in items:
         asset = primary_asset(item, lidar)
+        bbox = item_bbox(item)
         if asset is None or not asset.href:
             skipped.append(item)
         elif lidar:
             if asset.is_copc:
-                specs.append(LayerSpec(item.id, asset.href, "copc"))
+                specs.append(LayerSpec(item.id, asset.href, "copc", bbox))
             else:
                 skipped.append(item)
         else:
-            specs.append(LayerSpec(item.id, raster_uri(asset.href), "gdal"))
+            specs.append(LayerSpec(item.id, raster_uri(asset.href), "gdal", bbox))
     return specs, skipped
 
 
-def local_specs(paths: Iterable[str]) -> List[LayerSpec]:
+def item_bbox(item: Item) -> Optional[Bbox]:
+    bbox = item.bbox
+    return tuple(float(v) for v in bbox[:4]) if bbox and len(bbox) >= 4 else None
+
+
+def local_specs(paths: Iterable[str], bboxes: Optional[Dict[str, Optional[Bbox]]] = None) -> List[LayerSpec]:
     """Layer specs for downloaded files, by extension. Plain LAZ/LAS load through the PDAL provider,
-    COPC through the COPC provider (both read local files); unknown types are ignored."""
+    COPC through the COPC provider (both read local files); unknown types are ignored. `bboxes`
+    maps a path to the tile's catalog footprint, used to catch a wrong CRS."""
+    bboxes = bboxes or {}
     specs: List[LayerSpec] = []
     for path in paths:
         lower = os.path.basename(path).lower()
@@ -74,8 +89,45 @@ def local_specs(paths: Iterable[str]) -> List[LayerSpec]:
             provider, stem = "gdal", os.path.splitext(os.path.basename(path))[0]
         else:
             continue
-        specs.append(LayerSpec(stem, path, provider))
+        specs.append(LayerSpec(stem, path, provider, bboxes.get(path)))
     return specs
+
+
+def _wgs84_extent(layer: QgsMapLayer) -> Optional[QgsRectangle]:
+    """The layer's extent in lon/lat under its current CRS, or None if that can't be computed."""
+    try:
+        transform = QgsCoordinateTransform(
+            layer.crs(), QgsCoordinateReferenceSystem("EPSG:4326"), QgsCoordinateTransformContext()
+        )
+        return transform.transformBoundingBox(layer.extent())
+    except Exception:
+        return None
+
+
+def _is_placed(layer: QgsMapLayer, bbox: Bbox) -> bool:
+    extent = _wgs84_extent(layer)
+    if extent is None or extent.isEmpty():
+        return False
+    # Tiles are ~0.02 degrees across, so a generous margin still separates Kentucky from Iran.
+    expected = QgsRectangle(*bbox).buffered(0.05)
+    return expected.contains(extent.center())
+
+
+def ensure_placed(layer: QgsMapLayer, bbox: Optional[Bbox]) -> bool:
+    """Make sure the layer lands where the catalog says the tile is. A file with no CRS of its own
+    can pick up the project's CRS (say Web Mercator), which puts a Kentucky tile in Iran. If the
+    layer is misplaced and the Kentucky CRS puts it in the right place, switch to that CRS.
+    Returns True if the CRS was changed."""
+    if bbox is None:
+        return False
+    if layer.crs().isValid() and _is_placed(layer, bbox):
+        return False
+    original = layer.crs()
+    layer.setCrs(QgsCoordinateReferenceSystem(DEFAULT_CRS))
+    if _is_placed(layer, bbox):
+        return True
+    layer.setCrs(original)  # the fallback doesn't fit either; don't guess
+    return False
 
 
 def _build_layer(spec: LayerSpec) -> Tuple[Optional[QgsMapLayer], Optional[str]]:
@@ -87,10 +139,11 @@ def _build_layer(spec: LayerSpec) -> Tuple[Optional[QgsMapLayer], Optional[str]]
             layer = QgsRasterLayer(spec.uri, spec.name, "gdal")
         if not layer.isValid():
             return None, layer.error().summary() or "could not open"
-        # Fallback only: the tiles checked so far all carry a usable CRS (Phase 3 point clouds embed
-        # a compound one with no EPSG code), so this should rarely trigger.
+        # Most tiles carry a usable CRS; a file without one can pick up the project's CRS and land
+        # in the wrong country, so verify against where the catalog says the tile is.
         if not layer.crs().isValid():
             layer.setCrs(QgsCoordinateReferenceSystem(DEFAULT_CRS))
+        ensure_placed(layer, spec.bbox)
         # Layers must belong to the main thread before they are added to the project.
         layer.moveToThread(QgsApplication.instance().thread())
         return layer, None
@@ -133,6 +186,8 @@ class AddLayersTask(QgsTask):
                 continue
             project.addMapLayer(layer, False)
             group.addLayer(layer)
+            # QGIS can apply the project CRS to a layer as it is added; verify placement again.
+            ensure_placed(layer, spec.bbox)
             added += 1
         self._callback(added, failed)
 

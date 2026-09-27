@@ -55,6 +55,7 @@ class SearchTab(QWidget):
         self._size_task: Optional[SizesTask] = None
         self._download: Optional[DownloadManager] = None
         self._download_files: List[str] = []  # every file this download run should end up with
+        self._download_bboxes: dict = {}  # path -> the tile's catalog footprint
         self._pending_notes: List[str] = []
         self._items: List[Item] = []
         self._fids: List[Optional[int]] = []
@@ -334,6 +335,7 @@ class SearchTab(QWidget):
         """Plan the download, look up file sizes, confirm the total, then download."""
         jobs, missing = plan_downloads(items, self._lidar, folder)
         self._download_files = [j.dest for j in jobs]
+        self._download_bboxes = {j.dest: j.bbox for j in jobs}
         todo = [j for j in jobs if not os.path.exists(j.dest)]
         notes = []
         if missing:
@@ -410,7 +412,7 @@ class SearchTab(QWidget):
         if cancelled or not self.add_when_done.isChecked():
             return
         # Add every planned file that is now on disk, including ones downloaded on an earlier run.
-        specs = [s for s in local_specs([f for f in self._download_files if os.path.exists(f)])]
+        specs = local_specs([f for f in self._download_files if os.path.exists(f)], self._download_bboxes)
         specs = [s for s in specs if s not in already_on_map(specs)]
         if specs:
             self._run_add(specs, [])
