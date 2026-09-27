@@ -132,6 +132,12 @@ class SearchTab(QWidget):
             )
             self.mosaic_button.setEnabled(False)
             self.mosaic_button.clicked.connect(self.add_mosaic)
+        # Crops the mosaic to the AOI's actual shape (a GDAL warp cutline), not just the tiles'
+        # combined rectangle. Only makes sense for a polygon AOI; disabled otherwise.
+        self.clip_to_aoi: Optional[QCheckBox] = None
+        if not lidar:
+            self.clip_to_aoi = QCheckBox("Clip to area of interest")
+            self.clip_to_aoi.setChecked(True)
         # Registers a search restricted to the selected tiles' ids and streams that as an XYZ
         # layer -- a precise crop instead of the whole-state streaming layer, with no download and
         # no local stitching. Same raster-only restriction as the VRT mosaic.
@@ -183,6 +189,7 @@ class SearchTab(QWidget):
         layout.addLayout(actions)
         if self.mosaic_button is not None:
             layout.addWidget(self.mosaic_button)
+            layout.addWidget(self.clip_to_aoi)
         if self.server_mosaic_button is not None:
             layout.addWidget(self.server_mosaic_button)
         layout.addWidget(self.add_when_done)
@@ -309,8 +316,20 @@ class SearchTab(QWidget):
         layer, message = add_streaming_layer(ids[0], self._selected_collection_title(ids[0]), style)
         (self._info if layer is not None or "already" in message else self._warn)(message)
 
+    def _aoi_is_polygon(self) -> bool:
+        return self._aoi.has_aoi and self._aoi.geometry.type() == Qgis.GeometryType.Polygon
+
     def _update_search_enabled(self):
         self._update_stream_controls()
+        if self.clip_to_aoi is not None:
+            polygon = self._aoi_is_polygon()
+            self.clip_to_aoi.setEnabled(polygon)
+            self.clip_to_aoi.setToolTip(
+                ""
+                if polygon
+                else "Draw a Polygon AOI, or select features, to clip a mosaic to its shape "
+                "(a point or line AOI has no area to clip to)"
+            )
         has_selection = bool(self.selected_collection_ids())
         ready = self._has_collections and has_selection and self._aoi.has_aoi and self._task is None
         self.search_button.setEnabled(ready)
@@ -496,9 +515,18 @@ class SearchTab(QWidget):
         if left_out:
             n = len(left_out)
             notes.append(f"{n} tile{'s' if n != 1 else ''} left out (alone in {'their' if n != 1 else 'its'} collection)")
+
+        clip_wkt = None
+        if self.clip_to_aoi is not None and self.clip_to_aoi.isChecked() and self._aoi_is_polygon():
+            try:
+                clip_wkt = self._aoi.geometry_wgs84(QgsProject.instance().transformContext()).asWkt()
+                notes.append("clipped to the area of interest")
+            except Exception as e:
+                self._warn(f"Could not use the area of interest to clip the mosaic, building it unclipped instead: {e}")
+
         self._pending_notes = notes
         self.mosaic_button.setText("Building mosaic...")
-        self._mosaic_task = BuildMosaicsTask(specs, self._on_mosaics_built)
+        self._mosaic_task = BuildMosaicsTask(specs, self._on_mosaics_built, clip_wkt=clip_wkt)
         self._update_add_enabled()
         QgsApplication.taskManager().addTask(self._mosaic_task)
 
