@@ -93,11 +93,19 @@ def local_specs(paths: Iterable[str], bboxes: Optional[Dict[str, Optional[Bbox]]
     return specs
 
 
+def _fresh_crs(crs: QgsCoordinateReferenceSystem) -> QgsCoordinateReferenceSystem:
+    """A CRS object created on the calling thread. A layer built on a worker thread carries a CRS
+    object created there, and coordinate transforms built from it on the main thread come back
+    invalid (in one direction) and also spoil later transforms for the same CRS."""
+    fresh = QgsCoordinateReferenceSystem(crs.authid()) if crs.authid() else QgsCoordinateReferenceSystem.fromWkt(crs.toWkt())
+    return fresh if fresh.isValid() else crs
+
+
 def _wgs84_extent(layer: QgsMapLayer) -> Optional[QgsRectangle]:
     """The layer's extent in lon/lat under its current CRS, or None if that can't be computed."""
     try:
         transform = QgsCoordinateTransform(
-            layer.crs(), QgsCoordinateReferenceSystem("EPSG:4326"), QgsCoordinateTransformContext()
+            _fresh_crs(layer.crs()), QgsCoordinateReferenceSystem("EPSG:4326"), QgsCoordinateTransformContext()
         )
         return transform.transformBoundingBox(layer.extent())
     except Exception:
@@ -139,11 +147,10 @@ def _build_layer(spec: LayerSpec) -> Tuple[Optional[QgsMapLayer], Optional[str]]
             layer = QgsRasterLayer(spec.uri, spec.name, "gdal")
         if not layer.isValid():
             return None, layer.error().summary() or "could not open"
-        # Most tiles carry a usable CRS; a file without one can pick up the project's CRS and land
-        # in the wrong country, so verify against where the catalog says the tile is.
+        # The placement check against the catalog footprint (ensure_placed) runs later on the main
+        # thread, once the layer has been added, so no coordinate transforms are built on workers.
         if not layer.crs().isValid():
             layer.setCrs(QgsCoordinateReferenceSystem(DEFAULT_CRS))
-        ensure_placed(layer, spec.bbox)
         # Layers must belong to the main thread before they are added to the project.
         layer.moveToThread(QgsApplication.instance().thread())
         return layer, None
@@ -184,6 +191,12 @@ class AddLayersTask(QgsTask):
             if layer is None:
                 failed.append((spec.name, error or "unknown error"))
                 continue
+            # Replace the worker-created CRS object with one made on this thread (see _fresh_crs), so
+            # nothing that uses the layer later, transforms or map rendering, holds a worker CRS.
+            # setCrs() does nothing for an equal CRS, so go through an invalid one to force the swap.
+            fresh = _fresh_crs(layer.crs())
+            layer.setCrs(QgsCoordinateReferenceSystem())
+            layer.setCrs(fresh)
             project.addMapLayer(layer, False)
             group.addLayer(layer)
             # QGIS can apply the project CRS to a layer as it is added; verify placement again.
