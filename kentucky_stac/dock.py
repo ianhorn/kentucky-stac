@@ -13,6 +13,8 @@ from qgis.PyQt.QtWidgets import (
     QWidget,
 )
 
+from .aoi import AoiState
+from .aoi_bar import AoiBar
 from .catalog import split_collections
 from .stac import DEFAULT_BASE_URI, Collection
 from .tasks import CollectionsTask
@@ -97,10 +99,18 @@ class KentuckyStacDock(QDockWidget):
         for tab in (self.imagery_tab, self.lidar_tab):
             tab.reload_requested.connect(self.load_collections)
 
+        self.aoi_state = AoiState(self)
+        self.aoi_bar = AoiBar(iface.mapCanvas(), self.aoi_state, iface.messageBar())
+
         self.tabs = QTabWidget()
         self.tabs.addTab(self.imagery_tab, "Imagery / DEM")
         self.tabs.addTab(self.lidar_tab, "LiDAR Pointcloud")
-        self.setWidget(self.tabs)
+
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.addWidget(self.aoi_bar)
+        layout.addWidget(self.tabs, 1)
+        self.setWidget(content)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -132,6 +142,7 @@ class KentuckyStacDock(QDockWidget):
 
     def shutdown(self):
         """Called on plugin unload: drop any in-flight task so its callback can't hit a dead widget."""
+        self.aoi_bar.shutdown()
         if self._task is not None:
             self._task.cancel()
             self._task = None
