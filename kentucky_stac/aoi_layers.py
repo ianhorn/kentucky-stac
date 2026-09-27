@@ -35,7 +35,7 @@ def _find_layer(project: QgsProject, kind: str) -> Optional[QgsVectorLayer]:
 
 def _create_layer(project: QgsProject, geometry_type, crs: QgsCoordinateReferenceSystem) -> QgsVectorLayer:
     kind, provider_geometry = _KINDS[geometry_type]
-    layer = QgsVectorLayer(f"{provider_geometry}?field=label:string", f"Kentucky STAC AOI ({kind})", "memory")
+    layer = QgsVectorLayer(f"{provider_geometry}?field=label:string", f"Ky STAC AOI ({kind})", "memory")
     layer.setCrs(crs)
     layer.setCustomProperty(KIND_PROPERTY, kind)
     if geometry_type == Qgis.GeometryType.Polygon:

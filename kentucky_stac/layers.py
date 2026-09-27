@@ -25,7 +25,7 @@ from .catalog import DEFAULT_CRS, primary_asset
 from .gdal_setup import ensure_ca_bundle
 from .stac import Item
 
-GROUP_NAME = "Kentucky STAC"
+GROUP_NAME = "Ky STAC"
 MAX_WORKERS = 4
 
 
@@ -100,7 +100,7 @@ def _build_layer(spec: LayerSpec) -> Tuple[Optional[QgsMapLayer], Optional[str]]
 
 class AddLayersTask(QgsTask):
     """Build layers in parallel, then add them to the project (main thread) in the
-    "Kentucky STAC" group. `callback(added, failed)` where failed is a list of (name, error)."""
+    "Ky STAC" group. `callback(added, failed)` where failed is a list of (name, error)."""
 
     def __init__(self, specs: List[LayerSpec], callback: Callable[[int, List[Tuple[str, str]]], None]):
         super().__init__(f"Adding {len(specs)} Kentucky STAC layer{'s' if len(specs) != 1 else ''}")

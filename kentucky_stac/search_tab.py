@@ -220,7 +220,7 @@ class SearchTab(QWidget):
 
         try:
             self._fids = show_results(
-                self._kind, f"Kentucky STAC results ({self._what})", self._items, self._lidar
+                self._kind, f"Ky STAC results ({self._what})", self._items, self._lidar
             )
         except Exception as e:
             self._fids = [None] * len(self._items)
