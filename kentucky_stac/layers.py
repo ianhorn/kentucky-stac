@@ -25,7 +25,7 @@ from qgis.core import (
 )
 
 from .catalog import DEFAULT_CRS, primary_asset
-from .gdal_setup import ensure_ca_bundle
+from .gdal_setup import setup_gdal
 from .stac import Item
 
 GROUP_NAME = "Ky STAC"
@@ -169,7 +169,7 @@ class AddLayersTask(QgsTask):
         self._built: List[Tuple[LayerSpec, Optional[QgsMapLayer], Optional[str]]] = []
 
     def run(self) -> bool:
-        ensure_ca_bundle()
+        setup_gdal()
         done = 0
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
             for spec, (layer, error) in zip(self._specs, pool.map(_build_layer, self._specs)):

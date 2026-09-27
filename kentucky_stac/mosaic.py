@@ -14,7 +14,7 @@ from typing import Callable, Dict, Iterable, List, Optional, Tuple
 from qgis.core import QgsTask
 
 from .catalog import primary_asset
-from .gdal_setup import ensure_ca_bundle
+from .gdal_setup import setup_gdal
 from .layers import Bbox, item_bbox, raster_uri
 from .stac import Item
 
@@ -72,7 +72,7 @@ class BuildMosaicsTask(QgsTask):
         self.failed: List[Tuple[str, str]] = []
 
     def run(self) -> bool:
-        ensure_ca_bundle()
+        setup_gdal()
         try:
             from osgeo import gdal
         except ImportError:
