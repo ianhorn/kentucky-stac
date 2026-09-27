@@ -11,6 +11,8 @@ from qgis.PyQt.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -67,10 +69,23 @@ class SearchTab(QWidget):
         self._has_collections = False
         self._results_message: Optional[str] = None
 
-        self.combo = QComboBox()
-        self.combo.setEnabled(False)
+        # A checklist rather than a single-select dropdown, so a search can span any combination of
+        # collections (e.g. two DEM phases together) -- styled after QGIS's own "Build Virtual
+        # Raster" input-layers panel (a list of checkboxes plus Select All / Clear Selection).
+        self.list = QListWidget()
+        self.list.setEnabled(False)
+        self.list.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.list.setMaximumHeight(110)
+        self.list.itemChanged.connect(self._on_collection_selection_changed)
+        self.select_all_button = QPushButton("Select All")
+        self.select_all_button.setEnabled(False)
+        self.select_all_button.clicked.connect(self.select_all_collections)
+        self.clear_selection_button = QPushButton("Clear Selection")
+        self.clear_selection_button.setEnabled(False)
+        self.clear_selection_button.clicked.connect(self.clear_collection_selection)
         self.reload_button = QPushButton("Reload")
         self.reload_button.setToolTip("Reload the collection list from the STAC API")
+        self.reload_button.setEnabled(False)
         self.reload_button.clicked.connect(self.reload_requested)
         self.status = QLabel()
         self.status.setWordWrap(True)
@@ -87,7 +102,6 @@ class SearchTab(QWidget):
             self.stream_style = QComboBox()
             self.stream_button = QPushButton("Add streaming layer")
             self.stream_button.clicked.connect(self.add_streaming)
-            self.combo.currentIndexChanged.connect(self._update_stream_controls)
 
         self.results_status = QLabel()
         self.results_status.setWordWrap(True)
@@ -138,9 +152,14 @@ class SearchTab(QWidget):
         self.cancel_button.setVisible(False)
         self.cancel_button.clicked.connect(self.cancel_download)
 
+        collection_buttons = QVBoxLayout()
+        collection_buttons.addWidget(self.select_all_button)
+        collection_buttons.addWidget(self.clear_selection_button)
+        collection_buttons.addWidget(self.reload_button)
+        collection_buttons.addStretch(1)
         row = QHBoxLayout()
-        row.addWidget(self.combo, 1)
-        row.addWidget(self.reload_button)
+        row.addWidget(self.list, 1)
+        row.addLayout(collection_buttons)
 
         actions = QHBoxLayout()
         actions.addWidget(self.add_button, 1)
@@ -150,7 +169,7 @@ class SearchTab(QWidget):
         progress_row.addWidget(self.cancel_button)
 
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("Collection"))
+        layout.addWidget(QLabel("Collections"))
         layout.addLayout(row)
         layout.addWidget(self.status)
         if self.stream_button is not None:
@@ -174,42 +193,83 @@ class SearchTab(QWidget):
 
     # ---- collections ----------------------------------------------------------------------
 
+    def _clear_collection_list(self):
+        self.list.blockSignals(True)
+        self.list.clear()
+        self.list.blockSignals(False)
+        self.list.setEnabled(False)
+        self.select_all_button.setEnabled(False)
+        self.clear_selection_button.setEnabled(False)
+
     def set_loading(self):
         self._has_collections = False
-        self.combo.clear()
-        self.combo.setEnabled(False)
+        self._clear_collection_list()
         self.reload_button.setEnabled(False)
         self.status.setText("Loading collections...")
         self._update_search_enabled()
 
     def set_error(self, message: str):
         self._has_collections = False
-        self.combo.clear()
-        self.combo.setEnabled(False)
+        self._clear_collection_list()
         self.reload_button.setEnabled(True)
         self.status.setText(f"Could not load collections: {message}")
         self._update_search_enabled()
 
     def set_collections(self, collections: List[Collection]):
-        self.combo.clear()
+        self._clear_collection_list()
         self.reload_button.setEnabled(True)
         if not collections:
             self._has_collections = False
             self.status.setText(f"No {self._what} collections found.")
             self._update_search_enabled()
             return
-        # Entry 0 searches every collection in this tab; the rest search one.
-        self.combo.addItem(f"All {self._what}", [c.id for c in collections])
+        # All collections start checked, matching the old dropdown's "All <what>" default.
+        self.list.blockSignals(True)
         for c in collections:
-            self.combo.addItem(c.title_or_id, [c.id])
-            self.combo.setItemData(self.combo.count() - 1, _describe(c), Qt.ItemDataRole.ToolTipRole)
-        self.combo.setEnabled(True)
+            item = QListWidgetItem(c.title_or_id)
+            item.setData(Qt.ItemDataRole.UserRole, c.id)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Checked)
+            item.setToolTip(_describe(c))
+            self.list.addItem(item)
+        self.list.blockSignals(False)
+        self.list.setEnabled(True)
+        self.select_all_button.setEnabled(True)
+        self.clear_selection_button.setEnabled(True)
         self._has_collections = True
         self.status.setText(f"{len(collections)} collection{'s' if len(collections) != 1 else ''}")
         self._update_search_enabled()
 
     def selected_collection_ids(self) -> List[str]:
-        return list(self.combo.currentData() or [])
+        return [
+            self.list.item(i).data(Qt.ItemDataRole.UserRole)
+            for i in range(self.list.count())
+            if self.list.item(i).checkState() == Qt.CheckState.Checked
+        ]
+
+    def _selected_collection_title(self, collection_id: str) -> str:
+        for i in range(self.list.count()):
+            item = self.list.item(i)
+            if item.data(Qt.ItemDataRole.UserRole) == collection_id:
+                return item.text()
+        return collection_id
+
+    def select_all_collections(self):
+        self.list.blockSignals(True)
+        for i in range(self.list.count()):
+            self.list.item(i).setCheckState(Qt.CheckState.Checked)
+        self.list.blockSignals(False)
+        self._on_collection_selection_changed()
+
+    def clear_collection_selection(self):
+        self.list.blockSignals(True)
+        for i in range(self.list.count()):
+            self.list.item(i).setCheckState(Qt.CheckState.Unchecked)
+        self.list.blockSignals(False)
+        self._on_collection_selection_changed()
+
+    def _on_collection_selection_changed(self, *_):
+        self._update_search_enabled()
 
     # ---- search ---------------------------------------------------------------------------
 
@@ -246,17 +306,20 @@ class SearchTab(QWidget):
         style = next((s for s in styles_for(ids[0]) if s.key == self.stream_style.currentData()), None)
         if style is None:
             return
-        layer, message = add_streaming_layer(ids[0], self.combo.currentText(), style)
+        layer, message = add_streaming_layer(ids[0], self._selected_collection_title(ids[0]), style)
         (self._info if layer is not None or "already" in message else self._warn)(message)
 
     def _update_search_enabled(self):
         self._update_stream_controls()
-        ready = self._has_collections and self._aoi.has_aoi and self._task is None
+        has_selection = bool(self.selected_collection_ids())
+        ready = self._has_collections and has_selection and self._aoi.has_aoi and self._task is None
         self.search_button.setEnabled(ready)
         if self._task is not None:
             hint = "Searching..."
         elif not self._has_collections:
             hint = "Waiting for collections."
+        elif not has_selection:
+            hint = "Check at least one collection above."
         elif not self._aoi.has_aoi:
             hint = "Set an area of interest above to search."
         else:
