@@ -1,13 +1,17 @@
-from typing import List, Optional
+import os
+from typing import Dict, List, Optional
 
-from qgis.core import Qgis, QgsApplication, QgsProject
+from qgis.core import Qgis, QgsApplication, QgsProject, QgsSettings
 from qgis.PyQt.QtCore import Qt, pyqtSignal
 from qgis.PyQt.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QComboBox,
+    QFileDialog,
     QHBoxLayout,
     QLabel,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QTreeWidget,
     QTreeWidgetItem,
@@ -17,7 +21,8 @@ from qgis.PyQt.QtWidgets import (
 
 from .aoi import AoiState
 from .catalog import format_size, primary_asset
-from .layers import AddLayersTask, already_on_map, layer_specs
+from .downloads import DownloadJob, DownloadManager, SizesTask, plan_downloads
+from .layers import AddLayersTask, already_on_map, layer_specs, local_specs
 from .results_layer import select_results, show_results
 from .stac import Collection, Item, SearchQuery
 from .tasks import PAGE_SIZE, SearchTask
@@ -47,6 +52,9 @@ class SearchTab(QWidget):
         self._bar = message_bar
         self._task: Optional[SearchTask] = None
         self._add_task: Optional[AddLayersTask] = None
+        self._size_task: Optional[SizesTask] = None
+        self._download: Optional[DownloadManager] = None
+        self._download_files: List[str] = []  # every file this download run should end up with
         self._pending_notes: List[str] = []
         self._items: List[Item] = []
         self._fids: List[Optional[int]] = []
@@ -79,9 +87,28 @@ class SearchTab(QWidget):
         self.add_button.setEnabled(False)
         self.add_button.clicked.connect(self.add_to_map)
 
+        self.download_button = QPushButton("Download selected...")
+        self.download_button.setToolTip("Save the selected tiles to a folder")
+        self.download_button.setEnabled(False)
+        self.download_button.clicked.connect(self.download_selected)
+        self.add_when_done = QCheckBox("Add downloaded files to the map")
+        self.add_when_done.setChecked(True)
+        self.progress = QProgressBar()
+        self.progress.setVisible(False)
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.setVisible(False)
+        self.cancel_button.clicked.connect(self.cancel_download)
+
         row = QHBoxLayout()
         row.addWidget(self.combo, 1)
         row.addWidget(self.reload_button)
+
+        actions = QHBoxLayout()
+        actions.addWidget(self.add_button, 1)
+        actions.addWidget(self.download_button, 1)
+        progress_row = QHBoxLayout()
+        progress_row.addWidget(self.progress, 1)
+        progress_row.addWidget(self.cancel_button)
 
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("Collection"))
@@ -90,7 +117,9 @@ class SearchTab(QWidget):
         layout.addWidget(self.search_button)
         layout.addWidget(self.results_status)
         layout.addWidget(self.tree, 1)
-        layout.addWidget(self.add_button)
+        layout.addLayout(actions)
+        layout.addWidget(self.add_when_done)
+        layout.addLayout(progress_row)
 
         self._aoi.changed.connect(self._update_search_enabled)
         self.set_loading()
@@ -224,13 +253,18 @@ class SearchTab(QWidget):
         select_results(self._kind, [self._fids[r] for r in rows if r < len(self._fids) and self._fids[r] is not None])
         self._update_add_enabled()
 
+    def _busy(self) -> bool:
+        return any(t is not None for t in (self._add_task, self._size_task, self._download))
+
     def _update_add_enabled(self):
-        self.add_button.setEnabled(bool(self.tree.selectedItems()) and self._add_task is None)
+        enabled = bool(self.tree.selectedItems()) and not self._busy()
+        self.add_button.setEnabled(enabled)
+        self.download_button.setEnabled(enabled)
 
     # ---- add to map -----------------------------------------------------------------------
 
     def add_to_map(self):
-        if self._add_task is not None:
+        if self._busy():
             return
         items = self.selected_items()
         specs, skipped = layer_specs(items, self._lidar)
@@ -256,6 +290,9 @@ class SearchTab(QWidget):
             if answer != QMessageBox.StandardButton.Yes:
                 return
 
+        self._run_add(specs, notes)
+
+    def _run_add(self, specs, notes: List[str]):
         self._pending_notes = notes
         self._add_task = AddLayersTask(specs, self._on_layers_added)
         self._update_add_enabled()
@@ -276,6 +313,116 @@ class SearchTab(QWidget):
         else:
             self._info(text)
 
+    # ---- download -------------------------------------------------------------------------
+
+    def download_selected(self):
+        if self._busy():
+            return
+        items = self.selected_items()
+        if not items:
+            return
+        settings = QgsSettings()
+        folder = QFileDialog.getExistingDirectory(
+            self, "Download tiles to", str(settings.value("kentucky_stac/download_dir", "") or "")
+        )
+        if not folder:
+            return
+        settings.setValue("kentucky_stac/download_dir", folder)
+        self.start_download(items, folder)
+
+    def start_download(self, items: List[Item], folder: str):
+        """Plan the download, look up file sizes, confirm the total, then download."""
+        jobs, missing = plan_downloads(items, self._lidar, folder)
+        self._download_files = [j.dest for j in jobs]
+        todo = [j for j in jobs if not os.path.exists(j.dest)]
+        notes = []
+        if missing:
+            notes.append(f"{len(missing)} tile{'s have' if len(missing) != 1 else ' has'} nothing to download")
+        if len(jobs) - len(todo):
+            notes.append(f"{len(jobs) - len(todo)} already in that folder")
+        self._pending_notes = notes
+        if not todo:
+            self._info("Nothing new to download: " + "; ".join(notes) + "." if notes else "Nothing to download.")
+            self._finish_download_run([], [], False)
+            return
+
+        self.results_status.setText("Checking file sizes...")
+        self._size_task = SizesTask([j.url for j in todo], lambda sizes: self._on_sizes(todo, sizes))
+        self._update_add_enabled()
+        QgsApplication.taskManager().addTask(self._size_task)
+
+    def _on_sizes(self, todo: List[DownloadJob], sizes: Dict[str, Optional[int]]):
+        self._size_task = None
+        self._show_sizes(sizes)
+        self.results_status.setText(self._results_message or "")
+        known = [sizes.get(j.url) for j in todo]
+        total = sum(s for s in known if s)
+        unknown = sum(1 for s in known if not s)
+        size_text = format_size(total) if total else "unknown size"
+        if total and unknown:
+            size_text += f" plus {unknown} of unknown size"
+        if not self._confirm_download(f"Download {len(todo)} file{'s' if len(todo) != 1 else ''} ({size_text})?"):
+            self._update_add_enabled()
+            return
+        self._begin_download(todo, sizes)
+
+    def _confirm_download(self, text: str) -> bool:
+        return QMessageBox.question(self, "Download tiles", text) == QMessageBox.StandardButton.Yes
+
+    def _begin_download(self, jobs: List[DownloadJob], sizes: Dict[str, Optional[int]]):
+        self._download = DownloadManager(jobs, sizes, parent=self)
+        self._download.progress.connect(self._on_download_progress)
+        self._download.finished.connect(self._finish_download_run)
+        self.progress.setValue(0)
+        self.progress.setFormat(f"0 of {len(jobs)} files - %p%")
+        self.progress.setVisible(True)
+        self.cancel_button.setVisible(True)
+        self._update_add_enabled()
+        self._download.start()
+
+    def _on_download_progress(self, done: int, total: int, percent: int):
+        self.progress.setValue(percent)
+        self.progress.setFormat(f"{done} of {total} files - %p%")
+
+    def cancel_download(self):
+        if self._download is not None:
+            self.cancel_button.setEnabled(False)
+            self._download.cancel()
+
+    def _finish_download_run(self, completed: list, failed: list, cancelled: bool):
+        manager, self._download = self._download, None
+        if manager is not None:
+            manager.deleteLater()
+        self.progress.setVisible(False)
+        self.cancel_button.setVisible(False)
+        self.cancel_button.setEnabled(True)
+        self._update_add_enabled()
+
+        notes = list(self._pending_notes)
+        if completed or failed or cancelled:
+            head = f"Downloaded {len(completed)} file{'s' if len(completed) != 1 else ''}"
+            if cancelled:
+                head += " (cancelled)"
+            parts = [head] + notes
+            if failed:
+                parts.append(f"{len(failed)} failed (first: {failed[0][0]}: {failed[0][1]})")
+            (self._warn if failed else self._info)("; ".join(parts) + ".")
+        if cancelled or not self.add_when_done.isChecked():
+            return
+        # Add every planned file that is now on disk, including ones downloaded on an earlier run.
+        specs = [s for s in local_specs([f for f in self._download_files if os.path.exists(f)])]
+        specs = [s for s in specs if s not in already_on_map(specs)]
+        if specs:
+            self._run_add(specs, [])
+
+    def _show_sizes(self, sizes: Dict[str, Optional[int]]):
+        for row, item in enumerate(self._items):
+            asset = primary_asset(item, self._lidar)
+            size = sizes.get(asset.href) if asset else None
+            if size:
+                self.tree.topLevelItem(row).setText(3, format_size(size))
+        self.tree.resizeColumnToContents(3)
+
     def selected_items(self) -> List[Item]:
         """The tiles currently selected in the results list."""
         rows = sorted(self.tree.indexOfTopLevelItem(i) for i in self.tree.selectedItems())
@@ -290,8 +437,11 @@ class SearchTab(QWidget):
             self._bar.pushMessage("Kentucky STAC", text, level=Qgis.MessageLevel.Info, duration=8)
 
     def shutdown(self):
-        for attr in ("_task", "_add_task"):
+        for attr in ("_task", "_add_task", "_size_task"):
             task = getattr(self, attr)
             if task is not None:
                 task.cancel()
                 setattr(self, attr, None)
+        if self._download is not None:
+            self._download.cancel()
+            self._download = None

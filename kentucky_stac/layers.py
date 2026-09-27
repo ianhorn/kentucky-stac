@@ -6,6 +6,7 @@ worker threads and only added to the project on the main thread.
 
 from __future__ import annotations
 
+import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Callable, Iterable, List, Optional, Tuple
@@ -32,7 +33,7 @@ MAX_WORKERS = 4
 class LayerSpec:
     name: str
     uri: str
-    provider: str  # "gdal" or "copc"
+    provider: str  # "gdal" (raster), "copc" (COPC point cloud) or "pdal" (plain LAZ/LAS point cloud)
 
 
 def raster_uri(href: str) -> str:
@@ -59,11 +60,29 @@ def layer_specs(items: Iterable[Item], lidar: bool) -> Tuple[List[LayerSpec], Li
     return specs, skipped
 
 
+def local_specs(paths: Iterable[str]) -> List[LayerSpec]:
+    """Layer specs for downloaded files, by extension. Plain LAZ/LAS load through the PDAL provider,
+    COPC through the COPC provider (both read local files); unknown types are ignored."""
+    specs: List[LayerSpec] = []
+    for path in paths:
+        lower = os.path.basename(path).lower()
+        if lower.endswith(".copc.laz"):
+            provider, stem = "copc", os.path.basename(path)[: -len(".copc.laz")] + ".copc"
+        elif lower.endswith((".laz", ".las")):
+            provider, stem = "pdal", os.path.splitext(os.path.basename(path))[0]
+        elif lower.endswith((".tif", ".tiff")):
+            provider, stem = "gdal", os.path.splitext(os.path.basename(path))[0]
+        else:
+            continue
+        specs.append(LayerSpec(stem, path, provider))
+    return specs
+
+
 def _build_layer(spec: LayerSpec) -> Tuple[Optional[QgsMapLayer], Optional[str]]:
     """Runs on a worker thread. Returns (layer, error)."""
     try:
-        if spec.provider == "copc":
-            layer: QgsMapLayer = QgsPointCloudLayer(spec.uri, spec.name, "copc")
+        if spec.provider in ("copc", "pdal"):
+            layer: QgsMapLayer = QgsPointCloudLayer(spec.uri, spec.name, spec.provider)
         else:
             layer = QgsRasterLayer(spec.uri, spec.name, "gdal")
         if not layer.isValid():
