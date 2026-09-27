@@ -13,7 +13,7 @@ class KentuckyStacPlugin:
         self.dock = None
 
     def initGui(self):
-        self.dock = KentuckyStacDock(self.iface.mainWindow())
+        self.dock = KentuckyStacDock(self.iface, self.iface.mainWindow())
         self.iface.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock)
         self.dock.hide()
 
@@ -32,6 +32,7 @@ class KentuckyStacPlugin:
             self.action.deleteLater()
             self.action = None
         if self.dock is not None:
+            self.dock.shutdown()
             self.iface.removeDockWidget(self.dock)
             self.dock.deleteLater()
             self.dock = None
