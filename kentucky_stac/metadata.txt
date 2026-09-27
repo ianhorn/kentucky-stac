@@ -1,7 +1,6 @@
 [general]
 name=Kentucky STAC
 qgisMinimumVersion=3.34
-supportsQt6=True
 description=Search, load and download Kentucky From Above imagery, elevation and LiDAR via STAC.
 about=Search the Kentucky From Above STAC API for imagery, DEM and LiDAR (COPC) tiles within an area of interest, add them to the map, and download them.
 version=0.1.0
