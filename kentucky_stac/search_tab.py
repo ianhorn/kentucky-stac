@@ -26,7 +26,7 @@ from .downloads import DownloadJob, DownloadManager, SizesTask, plan_downloads
 from .layers import AddLayersTask, LayerSpec, already_on_map, layer_specs, local_specs
 from .mosaic import BuildMosaicsTask, plan_mosaics
 from .results_layer import select_results, show_results
-from .server_layers import add_streaming_layer, styles_for
+from .server_layers import RegisterMosaicsTask, add_search_layer, add_streaming_layer, plan_server_mosaics, styles_for
 from .stac import Collection, Item, SearchQuery
 from .tasks import PAGE_SIZE, SearchTask
 
@@ -57,6 +57,7 @@ class SearchTab(QWidget):
         self._add_task: Optional[AddLayersTask] = None
         self._size_task: Optional[SizesTask] = None
         self._mosaic_task: Optional[BuildMosaicsTask] = None
+        self._register_task: Optional[RegisterMosaicsTask] = None
         self._download: Optional[DownloadManager] = None
         self._download_files: List[str] = []  # every file this download run should end up with
         self._download_bboxes: dict = {}  # path -> the tile's catalog footprint
@@ -117,6 +118,18 @@ class SearchTab(QWidget):
             )
             self.mosaic_button.setEnabled(False)
             self.mosaic_button.clicked.connect(self.add_mosaic)
+        # Registers a search restricted to the selected tiles' ids and streams that as an XYZ
+        # layer -- a precise crop instead of the whole-state streaming layer, with no download and
+        # no local stitching. Same raster-only restriction as the VRT mosaic.
+        self.server_mosaic_button: Optional[QPushButton] = None
+        if not lidar:
+            self.server_mosaic_button = QPushButton("Add as server mosaic")
+            self.server_mosaic_button.setToolTip(
+                "Register the selected tiles as a mosaic on the tile server and stream it "
+                "(one mosaic per collection; renders like the streaming layer above)"
+            )
+            self.server_mosaic_button.setEnabled(False)
+            self.server_mosaic_button.clicked.connect(self.add_server_mosaic)
         self.add_when_done = QCheckBox("Add downloaded files to the map")
         self.add_when_done.setChecked(True)
         self.progress = QProgressBar()
@@ -151,6 +164,8 @@ class SearchTab(QWidget):
         layout.addLayout(actions)
         if self.mosaic_button is not None:
             layout.addWidget(self.mosaic_button)
+        if self.server_mosaic_button is not None:
+            layout.addWidget(self.server_mosaic_button)
         layout.addWidget(self.add_when_done)
         layout.addLayout(progress_row)
 
@@ -324,7 +339,10 @@ class SearchTab(QWidget):
         self._update_add_enabled()
 
     def _busy(self) -> bool:
-        return any(t is not None for t in (self._add_task, self._size_task, self._mosaic_task, self._download))
+        return any(
+            t is not None
+            for t in (self._add_task, self._size_task, self._mosaic_task, self._register_task, self._download)
+        )
 
     def _update_add_enabled(self):
         enabled = bool(self.tree.selectedItems()) and not self._busy()
@@ -332,6 +350,8 @@ class SearchTab(QWidget):
         self.download_button.setEnabled(enabled)
         if self.mosaic_button is not None:
             self.mosaic_button.setEnabled(enabled)
+        if self.server_mosaic_button is not None:
+            self.server_mosaic_button.setEnabled(enabled)
 
     # ---- add to map -----------------------------------------------------------------------
 
@@ -430,6 +450,41 @@ class SearchTab(QWidget):
             return
         specs = [LayerSpec(m.name, m.vrt_path, "gdal", m.bbox) for m in built]
         self._run_add(specs, list(self._pending_notes))
+
+    # ---- server mosaic ----------------------------------------------------------------------
+
+    def add_server_mosaic(self):
+        if self._busy():
+            return
+        items = self.selected_items()
+        groups = plan_server_mosaics(items)
+        if not groups:
+            self._info("Nothing to register: the selected tiles have no usable collection.")
+            return
+        self.server_mosaic_button.setText("Registering mosaic...")
+        self._register_task = RegisterMosaicsTask(groups, self._on_server_mosaics_registered)
+        self._update_add_enabled()
+        QgsApplication.taskManager().addTask(self._register_task)
+
+    def _on_server_mosaics_registered(self, built: list, failed: list):
+        self._register_task = None
+        self.server_mosaic_button.setText("Add as server mosaic")
+        added, extra_notes = 0, []
+        for group, search_id, style in built:
+            layer, message = add_search_layer(search_id, group.collection_id, style, len(group.ids))
+            if layer is not None:
+                added += 1
+            elif "already" not in message:
+                extra_notes.append(message)
+
+        parts = [f"Added {added} server mosaic{'s' if added != 1 else ''}"]
+        if failed:
+            first = f"{failed[0][0]}: {failed[0][1]}"
+            parts.append(f"{len(failed)} failed to register (first: {first})")
+        parts.extend(extra_notes)
+        text = "; ".join(parts) + "."
+        (self._warn if failed or extra_notes else self._info)(text)
+        self._update_add_enabled()
 
     # ---- download -------------------------------------------------------------------------
 
@@ -556,7 +611,7 @@ class SearchTab(QWidget):
             self._bar.pushMessage("Kentucky STAC", text, level=Qgis.MessageLevel.Info, duration=8)
 
     def shutdown(self):
-        for attr in ("_task", "_add_task", "_size_task", "_mosaic_task"):
+        for attr in ("_task", "_add_task", "_size_task", "_mosaic_task", "_register_task"):
             task = getattr(self, attr)
             if task is not None:
                 task.cancel()
