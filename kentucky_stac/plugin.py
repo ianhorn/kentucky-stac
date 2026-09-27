@@ -1,4 +1,7 @@
+import os
+
 from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction
 
 from .dock import KentuckyStacDock
@@ -17,7 +20,8 @@ class KentuckyStacPlugin:
         self.iface.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock)
         self.dock.hide()
 
-        self.action = QAction(PLUGIN_NAME, self.iface.mainWindow())
+        icon = QIcon(os.path.join(os.path.dirname(__file__), "icon.svg"))
+        self.action = QAction(icon, PLUGIN_NAME, self.iface.mainWindow())
         self.action.setCheckable(True)
         self.action.toggled.connect(self.dock.setVisible)
         self.dock.visibilityChanged.connect(self.action.setChecked)
