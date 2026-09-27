@@ -26,6 +26,7 @@ from .downloads import DownloadJob, DownloadManager, SizesTask, plan_downloads
 from .layers import AddLayersTask, LayerSpec, already_on_map, layer_specs, local_specs
 from .mosaic import BuildMosaicsTask, plan_mosaics
 from .results_layer import select_results, show_results
+from .server_layers import add_streaming_layer, styles_for
 from .stac import Collection, Item, SearchQuery
 from .tasks import PAGE_SIZE, SearchTask
 
@@ -75,6 +76,17 @@ class SearchTab(QWidget):
 
         self.search_button = QPushButton("Search area of interest")
         self.search_button.clicked.connect(self.search)
+
+        # Statewide streaming layers come from the tile server's per-collection mosaics, so they
+        # only exist for raster collections (imagery/DEM), not point clouds.
+        self.stream_style: Optional[QComboBox] = None
+        self.stream_button: Optional[QPushButton] = None
+        self._stream_collection: Optional[str] = None
+        if not lidar:
+            self.stream_style = QComboBox()
+            self.stream_button = QPushButton("Add streaming layer")
+            self.stream_button.clicked.connect(self.add_streaming)
+            self.combo.currentIndexChanged.connect(self._update_stream_controls)
 
         self.results_status = QLabel()
         self.results_status.setWordWrap(True)
@@ -128,6 +140,11 @@ class SearchTab(QWidget):
         layout.addWidget(QLabel("Collection"))
         layout.addLayout(row)
         layout.addWidget(self.status)
+        if self.stream_button is not None:
+            stream_row = QHBoxLayout()
+            stream_row.addWidget(self.stream_style, 1)
+            stream_row.addWidget(self.stream_button)
+            layout.addLayout(stream_row)
         layout.addWidget(self.search_button)
         layout.addWidget(self.results_status)
         layout.addWidget(self.tree, 1)
@@ -181,7 +198,44 @@ class SearchTab(QWidget):
 
     # ---- search ---------------------------------------------------------------------------
 
+    # ---- streaming layers -----------------------------------------------------------------
+
+    def _update_stream_controls(self, *_):
+        """Offer the rendering styles of the selected collection (one collection only)."""
+        if self.stream_button is None:
+            return
+        ids = self.selected_collection_ids()
+        collection = ids[0] if len(ids) == 1 else None
+        if collection != self._stream_collection:
+            self._stream_collection = collection
+            previous = self.stream_style.currentData()
+            self.stream_style.clear()
+            for style in styles_for(collection) if collection else []:
+                self.stream_style.addItem(style.label, style.key)
+            index = self.stream_style.findData(previous)
+            if index >= 0:
+                self.stream_style.setCurrentIndex(index)
+        available = self.stream_style.count() > 0
+        self.stream_style.setEnabled(available)
+        self.stream_button.setEnabled(available)
+        self.stream_button.setToolTip(
+            "Stream the whole collection from the tile server as a map layer"
+            if available
+            else "Pick a single imagery or DEM collection above to stream it"
+        )
+
+    def add_streaming(self):
+        ids = self.selected_collection_ids()
+        if len(ids) != 1:
+            return
+        style = next((s for s in styles_for(ids[0]) if s.key == self.stream_style.currentData()), None)
+        if style is None:
+            return
+        layer, message = add_streaming_layer(ids[0], self.combo.currentText(), style)
+        (self._info if layer is not None or "already" in message else self._warn)(message)
+
     def _update_search_enabled(self):
+        self._update_stream_controls()
         ready = self._has_collections and self._aoi.has_aoi and self._task is None
         self.search_button.setEnabled(ready)
         if self._task is not None:
