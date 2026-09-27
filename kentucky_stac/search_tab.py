@@ -7,6 +7,7 @@ from qgis.PyQt.QtWidgets import (
     QComboBox,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPushButton,
     QTreeWidget,
     QTreeWidgetItem,
@@ -16,11 +17,13 @@ from qgis.PyQt.QtWidgets import (
 
 from .aoi import AoiState
 from .catalog import format_size, primary_asset
+from .layers import AddLayersTask, already_on_map, layer_specs
 from .results_layer import select_results, show_results
 from .stac import Collection, Item, SearchQuery
 from .tasks import PAGE_SIZE, SearchTask
 
 _COLUMNS = ["Tile", "Collection", "Date", "Size"]
+CONFIRM_ABOVE = 25  # ask before adding more layers than this at once
 
 
 def _describe(c: Collection) -> str:
@@ -43,6 +46,8 @@ class SearchTab(QWidget):
         self._aoi = aoi_state
         self._bar = message_bar
         self._task: Optional[SearchTask] = None
+        self._add_task: Optional[AddLayersTask] = None
+        self._pending_notes: List[str] = []
         self._items: List[Item] = []
         self._fids: List[Optional[int]] = []
         self._has_collections = False
@@ -69,6 +74,11 @@ class SearchTab(QWidget):
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.tree.itemSelectionChanged.connect(self._on_selection_changed)
 
+        self.add_button = QPushButton("Add selected to map")
+        self.add_button.setToolTip("Select tiles in the list above (Ctrl+A selects all)")
+        self.add_button.setEnabled(False)
+        self.add_button.clicked.connect(self.add_to_map)
+
         row = QHBoxLayout()
         row.addWidget(self.combo, 1)
         row.addWidget(self.reload_button)
@@ -80,6 +90,7 @@ class SearchTab(QWidget):
         layout.addWidget(self.search_button)
         layout.addWidget(self.results_status)
         layout.addWidget(self.tree, 1)
+        layout.addWidget(self.add_button)
 
         self._aoi.changed.connect(self._update_search_enabled)
         self.set_loading()
@@ -211,6 +222,59 @@ class SearchTab(QWidget):
     def _on_selection_changed(self):
         rows = [self.tree.indexOfTopLevelItem(i) for i in self.tree.selectedItems()]
         select_results(self._kind, [self._fids[r] for r in rows if r < len(self._fids) and self._fids[r] is not None])
+        self._update_add_enabled()
+
+    def _update_add_enabled(self):
+        self.add_button.setEnabled(bool(self.tree.selectedItems()) and self._add_task is None)
+
+    # ---- add to map -----------------------------------------------------------------------
+
+    def add_to_map(self):
+        if self._add_task is not None:
+            return
+        items = self.selected_items()
+        specs, skipped = layer_specs(items, self._lidar)
+        duplicates = already_on_map(specs)
+        specs = [s for s in specs if s not in duplicates]
+
+        notes = []
+        if skipped:
+            n = len(skipped)
+            notes.append(
+                f"{n} tile{'s are' if n != 1 else ' is'} plain LAZ/LAS, which QGIS can't stream; "
+                "download to view"
+            )
+        if duplicates:
+            notes.append(f"{len(duplicates)} already on the map")
+        if not specs:
+            self._info("Nothing to add: " + "; ".join(notes) + "." if notes else "Nothing to add.")
+            return
+        if len(specs) > CONFIRM_ABOVE:
+            answer = QMessageBox.question(
+                self, "Add many layers", f"Add {len(specs)} layers to the map? Loading them may take a while."
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+
+        self._pending_notes = notes
+        self._add_task = AddLayersTask(specs, self._on_layers_added)
+        self._update_add_enabled()
+        self.add_button.setText(f"Adding {len(specs)} layer{'s' if len(specs) != 1 else ''}...")
+        QgsApplication.taskManager().addTask(self._add_task)
+
+    def _on_layers_added(self, added: int, failed: list):
+        self._add_task = None
+        self.add_button.setText("Add selected to map")
+        self._update_add_enabled()
+        parts = [f"Added {added} layer{'s' if added != 1 else ''}"] + self._pending_notes
+        if failed:
+            first = f"{failed[0][0]}: {failed[0][1]}"
+            parts.append(f"{len(failed)} failed to load (first: {first})")
+        text = "; ".join(parts) + "."
+        if failed:
+            self._warn(text)
+        else:
+            self._info(text)
 
     def selected_items(self) -> List[Item]:
         """The tiles currently selected in the results list."""
@@ -221,7 +285,13 @@ class SearchTab(QWidget):
         if self._bar is not None:
             self._bar.pushMessage("Kentucky STAC", text, level=Qgis.MessageLevel.Warning, duration=8)
 
+    def _info(self, text: str):
+        if self._bar is not None:
+            self._bar.pushMessage("Kentucky STAC", text, level=Qgis.MessageLevel.Info, duration=8)
+
     def shutdown(self):
-        if self._task is not None:
-            self._task.cancel()
-            self._task = None
+        for attr in ("_task", "_add_task"):
+            task = getattr(self, attr)
+            if task is not None:
+                task.cancel()
+                setattr(self, attr, None)

@@ -6,6 +6,10 @@ from typing import Iterable, List, Optional, Tuple
 
 from .stac import Asset, Collection, Item
 
+# The tiles checked so far are all NAD83 / Kentucky Single Zone (ftUS). Only assumed as a fallback
+# for a file whose CRS QGIS can't read.
+DEFAULT_CRS = "EPSG:3089"
+
 
 def is_lidar_collection(collection: Collection) -> bool:
     """The catalog names its point-cloud collections "laz-phaseN"."""
