@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 from typing import Dict, List, Optional
 
 from qgis.core import Qgis, QgsApplication, QgsProject, QgsSettings
@@ -22,7 +23,8 @@ from qgis.PyQt.QtWidgets import (
 from .aoi import AoiState
 from .catalog import format_size, primary_asset
 from .downloads import DownloadJob, DownloadManager, SizesTask, plan_downloads
-from .layers import AddLayersTask, already_on_map, layer_specs, local_specs
+from .layers import AddLayersTask, LayerSpec, already_on_map, layer_specs, local_specs
+from .mosaic import BuildMosaicsTask, plan_mosaics
 from .results_layer import select_results, show_results
 from .stac import Collection, Item, SearchQuery
 from .tasks import PAGE_SIZE, SearchTask
@@ -53,6 +55,7 @@ class SearchTab(QWidget):
         self._task: Optional[SearchTask] = None
         self._add_task: Optional[AddLayersTask] = None
         self._size_task: Optional[SizesTask] = None
+        self._mosaic_task: Optional[BuildMosaicsTask] = None
         self._download: Optional[DownloadManager] = None
         self._download_files: List[str] = []  # every file this download run should end up with
         self._download_bboxes: dict = {}  # path -> the tile's catalog footprint
@@ -92,6 +95,16 @@ class SearchTab(QWidget):
         self.download_button.setToolTip("Save the selected tiles to a folder")
         self.download_button.setEnabled(False)
         self.download_button.clicked.connect(self.download_selected)
+        # Point clouds have no VRT equivalent, so only the imagery/DEM tab gets a mosaic button.
+        self.mosaic_button: Optional[QPushButton] = None
+        if not lidar:
+            self.mosaic_button = QPushButton("Add as mosaic (VRT)...")
+            self.mosaic_button.setToolTip(
+                "Stitch the selected tiles into one virtual raster, one per collection "
+                "(select two or more tiles)"
+            )
+            self.mosaic_button.setEnabled(False)
+            self.mosaic_button.clicked.connect(self.add_mosaic)
         self.add_when_done = QCheckBox("Add downloaded files to the map")
         self.add_when_done.setChecked(True)
         self.progress = QProgressBar()
@@ -119,6 +132,8 @@ class SearchTab(QWidget):
         layout.addWidget(self.results_status)
         layout.addWidget(self.tree, 1)
         layout.addLayout(actions)
+        if self.mosaic_button is not None:
+            layout.addWidget(self.mosaic_button)
         layout.addWidget(self.add_when_done)
         layout.addLayout(progress_row)
 
@@ -255,12 +270,14 @@ class SearchTab(QWidget):
         self._update_add_enabled()
 
     def _busy(self) -> bool:
-        return any(t is not None for t in (self._add_task, self._size_task, self._download))
+        return any(t is not None for t in (self._add_task, self._size_task, self._mosaic_task, self._download))
 
     def _update_add_enabled(self):
         enabled = bool(self.tree.selectedItems()) and not self._busy()
         self.add_button.setEnabled(enabled)
         self.download_button.setEnabled(enabled)
+        if self.mosaic_button is not None:
+            self.mosaic_button.setEnabled(enabled)
 
     # ---- add to map -----------------------------------------------------------------------
 
@@ -313,6 +330,52 @@ class SearchTab(QWidget):
             self._warn(text)
         else:
             self._info(text)
+
+    # ---- mosaic ---------------------------------------------------------------------------
+
+    def add_mosaic(self):
+        if self._busy():
+            return
+        items = self.selected_items()
+        if len(items) < 2:
+            self._info("Select two or more tiles to build a mosaic.")
+            return
+        settings = QgsSettings()
+        folder = QFileDialog.getExistingDirectory(
+            self, "Save the mosaic (.vrt) to", str(settings.value("kentucky_stac/mosaic_dir", "") or "")
+        )
+        if not folder:
+            return
+        settings.setValue("kentucky_stac/mosaic_dir", folder)
+        self.start_mosaic(items, folder)
+
+    def start_mosaic(self, items: List[Item], folder: str):
+        """Build one VRT per collection among `items` in `folder`, then add them to the map."""
+        specs, left_out = plan_mosaics(items, folder, datetime.now().strftime("%H%M%S"))
+        if not specs:
+            self._info("A mosaic needs two or more tiles from the same collection.")
+            return
+        notes = [f"saved to {folder}"]
+        if left_out:
+            n = len(left_out)
+            notes.append(f"{n} tile{'s' if n != 1 else ''} left out (alone in {'their' if n != 1 else 'its'} collection)")
+        self._pending_notes = notes
+        self.mosaic_button.setText("Building mosaic...")
+        self._mosaic_task = BuildMosaicsTask(specs, self._on_mosaics_built)
+        self._update_add_enabled()
+        QgsApplication.taskManager().addTask(self._mosaic_task)
+
+    def _on_mosaics_built(self, built: list, failed: list):
+        self._mosaic_task = None
+        self.mosaic_button.setText("Add as mosaic (VRT)...")
+        if failed:
+            first = f"{failed[0][0]}: {failed[0][1]}"
+            self._warn(f"{len(failed)} mosaic{'s' if len(failed) != 1 else ''} failed (first: {first}).")
+        if not built:
+            self._update_add_enabled()
+            return
+        specs = [LayerSpec(m.name, m.vrt_path, "gdal", m.bbox) for m in built]
+        self._run_add(specs, list(self._pending_notes))
 
     # ---- download -------------------------------------------------------------------------
 
@@ -439,7 +502,7 @@ class SearchTab(QWidget):
             self._bar.pushMessage("Kentucky STAC", text, level=Qgis.MessageLevel.Info, duration=8)
 
     def shutdown(self):
-        for attr in ("_task", "_add_task", "_size_task"):
+        for attr in ("_task", "_add_task", "_size_task", "_mosaic_task"):
             task = getattr(self, attr)
             if task is not None:
                 task.cancel()

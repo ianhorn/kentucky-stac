@@ -5,6 +5,7 @@ from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction
 
 from .dock import KentuckyStacDock
+from .gdal_setup import ensure_ca_bundle
 
 PLUGIN_NAME = "Kentucky STAC"
 
@@ -16,6 +17,13 @@ class KentuckyStacPlugin:
         self.dock = None
 
     def initGui(self):
+        # Applied at startup, not just on first use, so a saved project that reopens a VRT of remote
+        # tiles can read them behind HTTPS-inspecting antivirus.
+        try:
+            ensure_ca_bundle()
+        except Exception:
+            pass  # remote rasters may fail to open, but the plugin itself should still load
+
         self.dock = KentuckyStacDock(self.iface, self.iface.mainWindow())
         self.iface.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock)
         self.dock.hide()
