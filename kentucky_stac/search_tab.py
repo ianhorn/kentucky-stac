@@ -1,4 +1,5 @@
 import os
+from dataclasses import replace
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -22,11 +23,12 @@ from qgis.PyQt.QtWidgets import (
     QWidget,
 )
 
-from .aoi import AoiState
+from .aoi import AoiState, wkt_parts
 from .catalog import format_size, primary_asset
 from .downloads import DownloadJob, DownloadManager, SizesTask, plan_downloads
 from .layers import AddLayersTask, LayerSpec, already_on_map, item_bbox, layer_specs, local_specs, union_bbox
 from .mosaic import BuildMosaicsTask, plan_mosaics
+from .pdal_clip import CropPointCloudsTask, clipped_path
 from .results_layer import select_results, show_results
 from .server_layers import RegisterMosaicsTask, add_search_layer, add_streaming_layer, plan_server_mosaics, styles_for
 from .stac import Collection, Item, SearchQuery
@@ -62,6 +64,8 @@ class SearchTab(QWidget):
         self._mosaic_task: Optional[BuildMosaicsTask] = None
         self._register_task: Optional[RegisterMosaicsTask] = None
         self._download: Optional[DownloadManager] = None
+        self._clip_task: Optional[CropPointCloudsTask] = None
+        self._clip_sources: dict = {}  # cropped path -> the original downloaded path it came from
         self._download_files: List[str] = []  # every file this download run should end up with
         self._download_bboxes: dict = {}  # path -> the tile's catalog footprint
         self._download_items: dict = {}  # path -> the originating STAC item, for building a VPC
@@ -146,6 +150,13 @@ class SearchTab(QWidget):
             )
             self.server_mosaic_button.setEnabled(False)
             self.server_mosaic_button.clicked.connect(self.add_server_mosaic)
+        # Crops each downloaded tile to the AOI's actual shape via PDAL (see pdal_clip.py) before
+        # combining into a VPC / adding it, rather than the tiles' full rectangular extent. Only
+        # makes sense for a polygon AOI -- a point/line AOI has no area to crop by.
+        self.clip_to_aoi: Optional[QCheckBox] = None
+        if lidar:
+            self.clip_to_aoi = QCheckBox("Clip to area of interest")
+            self.clip_to_aoi.setChecked(True)
         self.add_when_done = QCheckBox(
             "Add downloaded files to the map, combined into one virtual point cloud layer"
             if lidar
@@ -191,6 +202,8 @@ class SearchTab(QWidget):
             layout.addWidget(self.mosaic_button)
         if self.server_mosaic_button is not None:
             layout.addWidget(self.server_mosaic_button)
+        if self.clip_to_aoi is not None:
+            layout.addWidget(self.clip_to_aoi)
         layout.addWidget(self.add_when_done)
         layout.addLayout(progress_row)
 
@@ -315,8 +328,20 @@ class SearchTab(QWidget):
         layer, message = add_streaming_layer(ids[0], self._selected_collection_title(ids[0]), style)
         (self._info if layer is not None or "already" in message else self._warn)(message)
 
+    def _aoi_is_polygon(self) -> bool:
+        return self._aoi.has_aoi and self._aoi.geometry.type() == Qgis.GeometryType.Polygon
+
     def _update_search_enabled(self):
         self._update_stream_controls()
+        if self.clip_to_aoi is not None:
+            polygon = self._aoi_is_polygon()
+            self.clip_to_aoi.setEnabled(polygon)
+            self.clip_to_aoi.setToolTip(
+                ""
+                if polygon
+                else "Draw a Polygon AOI, or select polygon features, to clip point clouds to its "
+                "shape (a point or line AOI has no area to clip to)"
+            )
         has_selection = bool(self.selected_collection_ids())
         ready = self._has_collections and has_selection and self._aoi.has_aoi and self._task is None
         self.search_button.setEnabled(ready)
@@ -410,7 +435,14 @@ class SearchTab(QWidget):
     def _busy(self) -> bool:
         return any(
             t is not None
-            for t in (self._add_task, self._size_task, self._mosaic_task, self._register_task, self._download)
+            for t in (
+                self._add_task,
+                self._size_task,
+                self._mosaic_task,
+                self._register_task,
+                self._download,
+                self._clip_task,
+            )
         )
 
     def _update_add_enabled(self):
@@ -655,23 +687,85 @@ class SearchTab(QWidget):
             return
         # Add every planned file that is now on disk, including ones downloaded on an earlier run.
         paths = [f for f in self._download_files if os.path.exists(f)]
+        if not paths:
+            return
+        if self.clip_to_aoi is not None and self.clip_to_aoi.isChecked() and self._aoi_is_polygon():
+            self._start_clip(paths)
+            return
+        self._add_downloaded(paths, [])
+
+    def _start_clip(self, paths: List[str]):
+        """Crop every downloaded tile to the AOI (see pdal_clip.py) before adding/combining."""
+        try:
+            aoi_geom = self._aoi.geometry_wgs84(QgsProject.instance().transformContext())
+        except Exception as e:
+            self._warn(f"Could not use the area of interest to clip; adding the unclipped tiles instead: {e}")
+            self._add_downloaded(paths, [])
+            return
+        parts = wkt_parts(aoi_geom) if aoi_geom is not None else []
+        if not parts:
+            self._add_downloaded(paths, [])
+            return
+        out_dir = os.path.join(os.path.dirname(paths[0]), "clipped")
+        jobs = [(p, clipped_path(p, out_dir)) for p in paths]
+        self._clip_sources = {dst: src for src, dst in jobs}
+        self._clip_task = CropPointCloudsTask(jobs, parts, self._on_clip_finished)
+        self._update_add_enabled()
+        QgsApplication.taskManager().addTask(self._clip_task)
+
+    def _on_clip_finished(self, cropped: List[str], failed: list, tile_meta: dict):
+        self._clip_task = None
+        self._update_add_enabled()
+        for dst in cropped:
+            src = self._clip_sources.get(dst)
+            original_item = self._download_items.get(src) if src is not None else None
+            meta = tile_meta.get(dst)
+            # The VPC's declared pc:count/bbox/geometry must reflect the actual cropped file, not
+            # the original (uncropped) tile's -- see pdal_clip.real_metadata's docstring for the bug
+            # this fixes.
+            if original_item is not None and meta is not None:
+                self._download_items[dst] = replace(
+                    original_item,
+                    bbox=meta["bbox"],
+                    geometry=meta["geometry"],
+                    properties={**original_item.properties, "pc:count": meta["count"]},
+                )
+            elif src in self._download_items:
+                self._download_items[dst] = self._download_items[src]
+            if meta is not None and meta["bbox"] is not None:
+                self._download_bboxes[dst] = tuple(meta["bbox"])
+            elif src in self._download_bboxes:
+                self._download_bboxes[dst] = self._download_bboxes[src]
+        notes = []
+        if failed:
+            first = f"{failed[0][0]}: {failed[0][1]}"
+            notes.append(f"{len(failed)} tile{'s' if len(failed) != 1 else ''} left out (first: {first})")
+        if not cropped:
+            self._warn("; ".join(notes) + "." if notes else "Clipping produced no output; nothing added.")
+            return
+        self._add_downloaded(cropped, notes)
+
+    def _add_downloaded(self, paths: List[str], notes: List[str]):
         if self._lidar and len(paths) >= 2:
-            self._add_as_vpc(paths)
+            self._add_as_vpc(paths, notes)
             return
         specs = local_specs(paths, self._download_bboxes)
         specs = [s for s in specs if s not in already_on_map(specs)]
         if specs:
-            self._run_add(specs, [])
+            self._run_add(specs, notes)
+        elif notes:
+            self._warn("; ".join(notes) + ".")
 
-    def _add_as_vpc(self, paths: List[str]):
+    def _add_as_vpc(self, paths: List[str], notes: Optional[List[str]] = None):
         """Combine several downloaded point cloud files into one Virtual Point Cloud layer,
         instead of adding each one separately."""
+        notes = list(notes or [])
         entries = [(self._download_items[p], p) for p in paths if self._download_items.get(p) is not None]
         if len(entries) < 2:
             specs = local_specs(paths, self._download_bboxes)
             specs = [s for s in specs if s not in already_on_map(specs)]
             if specs:
-                self._run_add(specs, [])
+                self._run_add(specs, notes)
             return
         folder = os.path.dirname(paths[0])
         vpc_path = os.path.join(folder, f"kentucky_stac_pointcloud_{datetime.now().strftime('%H%M%S')}.vpc")
@@ -681,7 +775,8 @@ class SearchTab(QWidget):
             return
         bbox = union_bbox([b for b in (item_bbox(e[0]) for e in entries) if b is not None])
         spec = LayerSpec(f"Ky STAC point cloud ({count} tiles)", vpc_path, "vpc", bbox)
-        self._run_add([spec], [f"combined into one virtual point cloud ({os.path.basename(vpc_path)})"])
+        notes.append(f"combined into one virtual point cloud ({os.path.basename(vpc_path)})")
+        self._run_add([spec], notes)
 
     def _show_sizes(self, sizes: Dict[str, Optional[int]]):
         for row, item in enumerate(self._items):
@@ -705,7 +800,7 @@ class SearchTab(QWidget):
             self._bar.pushMessage("Kentucky STAC", text, level=Qgis.MessageLevel.Info, duration=8)
 
     def shutdown(self):
-        for attr in ("_task", "_add_task", "_size_task", "_mosaic_task", "_register_task"):
+        for attr in ("_task", "_add_task", "_size_task", "_mosaic_task", "_register_task", "_clip_task"):
             task = getattr(self, attr)
             if task is not None:
                 task.cancel()

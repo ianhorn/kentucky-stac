@@ -102,3 +102,11 @@ class AoiState(QObject):
         """The AOI as a GeoJSON geometry dict (lon/lat), for a STAC "intersects" search."""
         g = self.geometry_wgs84(transform_context)
         return None if g is None else json.loads(g.asJson(8))
+
+
+def wkt_parts(geometry: QgsGeometry) -> List[str]:
+    """Split a possibly-multipart polygon into single-part WKT strings. PDAL's filters.crop treats
+    several polygons as separate regions to keep, not a union of them (one output point view per
+    region) -- a multi-part AOI (e.g. several disjoint drawn/selected features) needs one crop stage
+    per part, recombined via filters.merge; see pdal_clip.py."""
+    return [part.asWkt() for part in geometry.asGeometryCollection()] if geometry.isMultipart() else [geometry.asWkt()]
