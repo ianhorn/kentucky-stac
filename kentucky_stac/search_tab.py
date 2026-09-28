@@ -115,15 +115,10 @@ class SearchTab(QWidget):
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.tree.itemSelectionChanged.connect(self._on_selection_changed)
 
-        # Streaming individual point cloud tiles directly had placement/reliability edge cases not
-        # worth carrying into a first release; the LiDAR tab downloads instead, then combines the
-        # results into one Virtual Point Cloud layer (see _add_as_vpc).
-        self.add_button: Optional[QPushButton] = None
-        if not lidar:
-            self.add_button = QPushButton("Add selected to map")
-            self.add_button.setToolTip("Select tiles in the list above (Ctrl+A selects all)")
-            self.add_button.setEnabled(False)
-            self.add_button.clicked.connect(self.add_to_map)
+        self.add_button = QPushButton("Add selected to map")
+        self.add_button.setToolTip("Select tiles in the list above (Ctrl+A selects all)")
+        self.add_button.setEnabled(False)
+        self.add_button.clicked.connect(self.add_to_map)
 
         self.download_button = QPushButton("Download selected...")
         self.download_button.setToolTip("Save the selected tiles to a folder")
@@ -173,8 +168,7 @@ class SearchTab(QWidget):
         row.addLayout(collection_buttons)
 
         actions = QHBoxLayout()
-        if self.add_button is not None:
-            actions.addWidget(self.add_button, 1)
+        actions.addWidget(self.add_button, 1)
         actions.addWidget(self.download_button, 1)
         progress_row = QHBoxLayout()
         progress_row.addWidget(self.progress, 1)
@@ -421,8 +415,7 @@ class SearchTab(QWidget):
 
     def _update_add_enabled(self):
         enabled = bool(self.tree.selectedItems()) and not self._busy()
-        if self.add_button is not None:
-            self.add_button.setEnabled(enabled)
+        self.add_button.setEnabled(enabled)
         self.download_button.setEnabled(enabled)
         if self.mosaic_button is not None:
             self.mosaic_button.setEnabled(enabled)
@@ -464,14 +457,12 @@ class SearchTab(QWidget):
         self._pending_notes = notes
         self._add_task = AddLayersTask(specs, self._on_layers_added)
         self._update_add_enabled()
-        if self.add_button is not None:
-            self.add_button.setText(f"Adding {len(specs)} layer{'s' if len(specs) != 1 else ''}...")
+        self.add_button.setText(f"Adding {len(specs)} layer{'s' if len(specs) != 1 else ''}...")
         QgsApplication.taskManager().addTask(self._add_task)
 
     def _on_layers_added(self, added: int, failed: list):
         self._add_task = None
-        if self.add_button is not None:
-            self.add_button.setText("Add selected to map")
+        self.add_button.setText("Add selected to map")
         self._update_add_enabled()
         parts = [f"Added {added} layer{'s' if added != 1 else ''}"] + self._pending_notes
         if failed:
@@ -674,8 +665,7 @@ class SearchTab(QWidget):
 
     def _add_as_vpc(self, paths: List[str]):
         """Combine several downloaded point cloud files into one Virtual Point Cloud layer,
-        instead of adding each one separately -- the LiDAR tab's replacement for streaming
-        individual tiles directly (see the comment on add_button)."""
+        instead of adding each one separately."""
         entries = [(self._download_items[p], p) for p in paths if self._download_items.get(p) is not None]
         if len(entries) < 2:
             specs = local_specs(paths, self._download_bboxes)
