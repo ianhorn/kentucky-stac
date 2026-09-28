@@ -15,7 +15,7 @@ from qgis.core import QgsTask
 
 from .catalog import primary_asset
 from .gdal_setup import setup_gdal
-from .layers import Bbox, item_bbox, raster_uri
+from .layers import Bbox, item_bbox, raster_uri, union_bbox
 from .stac import Item
 
 
@@ -25,12 +25,6 @@ class MosaicSpec:
     vrt_path: str
     sources: Tuple[str, ...]
     bbox: Optional[Bbox]  # union of the tiles' catalog footprints, used to verify placement
-
-
-def _union(boxes: List[Bbox]) -> Optional[Bbox]:
-    if not boxes:
-        return None
-    return (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
 
 
 def plan_mosaics(items: Iterable[Item], folder: str, stamp: str) -> Tuple[List[MosaicSpec], List[Item]]:
@@ -55,7 +49,7 @@ def plan_mosaics(items: Iterable[Item], folder: str, stamp: str) -> Tuple[List[M
         boxes = [b for b in (item_bbox(t) for t in tiles) if b is not None]
         safe = re.sub(r"[^A-Za-z0-9_.-]", "_", collection)
         path = os.path.join(folder, f"{safe}_{len(tiles)}tiles_{stamp}.vrt")
-        specs.append(MosaicSpec(f"{collection} mosaic ({len(tiles)} tiles)", path, sources, _union(boxes)))
+        specs.append(MosaicSpec(f"{collection} mosaic ({len(tiles)} tiles)", path, sources, union_bbox(boxes)))
     return specs, left_out
 
 

@@ -39,7 +39,8 @@ Bbox = Tuple[float, float, float, float]  # minx, miny, maxx, maxy in lon/lat
 class LayerSpec:
     name: str
     uri: str
-    provider: str  # "gdal" (raster), "copc" (COPC point cloud) or "pdal" (plain LAZ/LAS point cloud)
+    provider: str  # "gdal" (raster), "copc"/"pdal" (a single point cloud file) or "vpc" (a combined
+    # Virtual Point Cloud index over several local files -- see vpc.py)
     bbox: Optional[Bbox] = None  # where the catalog says the tile is, used to catch a wrong CRS
 
 
@@ -66,6 +67,12 @@ def layer_specs(items: Iterable[Item], lidar: bool) -> Tuple[List[LayerSpec], Li
         else:
             specs.append(LayerSpec(item.id, raster_uri(asset.href), "gdal", bbox))
     return specs, skipped
+
+
+def union_bbox(boxes: List[Bbox]) -> Optional[Bbox]:
+    if not boxes:
+        return None
+    return (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
 
 
 def item_bbox(item: Item) -> Optional[Bbox]:
@@ -141,7 +148,7 @@ def ensure_placed(layer: QgsMapLayer, bbox: Optional[Bbox]) -> bool:
 def _build_layer(spec: LayerSpec) -> Tuple[Optional[QgsMapLayer], Optional[str]]:
     """Runs on a worker thread. Returns (layer, error)."""
     try:
-        if spec.provider in ("copc", "pdal"):
+        if spec.provider in ("copc", "pdal", "vpc"):
             layer: QgsMapLayer = QgsPointCloudLayer(spec.uri, spec.name, spec.provider)
         else:
             layer = QgsRasterLayer(spec.uri, spec.name, "gdal")
