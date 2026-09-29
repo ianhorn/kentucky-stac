@@ -42,6 +42,29 @@ _THUMBNAIL_SIZE = 64
 CONFIRM_ABOVE = 25  # ask before adding more layers than this at once
 
 
+class WrapButton(QPushButton):
+    """A QPushButton whose label wraps onto multiple lines instead of being silently clipped --
+    QPushButton has no built-in word-wrap, so the label is a child QLabel (which does) rather than
+    the button's own text. setText()/text() are overridden so existing call sites that change a
+    button's label at runtime (e.g. "Adding N layers...") keep working unchanged."""
+
+    def __init__(self, text: str = "", parent=None):
+        super().__init__(parent)
+        self._label = QLabel(text, self)
+        self._label.setWordWrap(True)
+        self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.addWidget(self._label)
+
+    def setText(self, text: str) -> None:
+        self._label.setText(text)
+
+    def text(self) -> str:
+        return self._label.text()
+
+
 def _describe(c: Collection) -> str:
     start, end = (list(c.interval) + [None, None])[:2] if c.interval else (None, None)
     span = f"{(start or '?')[:10]} to {(end or 'present')[:10]}"
@@ -99,7 +122,7 @@ class SearchTab(QWidget):
         self.status = QLabel()
         self.status.setWordWrap(True)
 
-        self.search_button = QPushButton("Search area of interest")
+        self.search_button = WrapButton("Search area of interest")
         self.search_button.clicked.connect(self.search)
 
         # Statewide streaming layers come from the tile server's per-collection mosaics, so they
@@ -109,7 +132,7 @@ class SearchTab(QWidget):
         self._stream_collection: Optional[str] = None
         if not lidar:
             self.stream_style = QComboBox()
-            self.stream_button = QPushButton("Add streaming layer")
+            self.stream_button = WrapButton("Add streaming layer")
             self.stream_button.clicked.connect(self.add_streaming)
 
         self.results_status = QLabel()
@@ -124,7 +147,7 @@ class SearchTab(QWidget):
         self.tree.itemSelectionChanged.connect(self._on_selection_changed)
         self._thumb_replies: List[QNetworkReply] = []
 
-        self.add_button = QPushButton("Add selected to map")
+        self.add_button = WrapButton("Add selected to map")
         self.add_button.setToolTip("Select tiles in the list above (Ctrl+A selects all)")
         self.add_button.setEnabled(False)
         self.add_button.clicked.connect(self.add_to_map)
@@ -135,7 +158,7 @@ class SearchTab(QWidget):
         # (see layer_specs); plain LAZ/LAS is skipped, same restriction as "Add selected to map".
         self.vpc_button: Optional[QPushButton] = None
         if lidar:
-            self.vpc_button = QPushButton("Add selected as VPC")
+            self.vpc_button = WrapButton("Add selected as VPC")
             self.vpc_button.setToolTip(
                 "Combine the selected tiles into one virtual point cloud layer, streamed directly "
                 "with no download (select two or more COPC tiles)"
@@ -143,14 +166,14 @@ class SearchTab(QWidget):
             self.vpc_button.setEnabled(False)
             self.vpc_button.clicked.connect(self.add_selected_as_vpc)
 
-        self.download_button = QPushButton("Download selected...")
+        self.download_button = WrapButton("Download selected...")
         self.download_button.setToolTip("Save the selected tiles to a folder")
         self.download_button.setEnabled(False)
         self.download_button.clicked.connect(self.download_selected)
         # Point clouds have no VRT equivalent, so only the imagery/DEM tab gets a mosaic button.
         self.mosaic_button: Optional[QPushButton] = None
         if not lidar:
-            self.mosaic_button = QPushButton("Add as mosaic (VRT)...")
+            self.mosaic_button = WrapButton("Add as mosaic (VRT)...")
             self.mosaic_button.setToolTip(
                 "Stitch the selected tiles into one virtual raster, one per collection "
                 "(select two or more tiles)"
@@ -162,7 +185,7 @@ class SearchTab(QWidget):
         # no local stitching. Same raster-only restriction as the VRT mosaic.
         self.server_mosaic_button: Optional[QPushButton] = None
         if not lidar:
-            self.server_mosaic_button = QPushButton("Add as server mosaic")
+            self.server_mosaic_button = WrapButton("Add as server mosaic")
             self.server_mosaic_button.setToolTip(
                 "Register the selected tiles as a mosaic on the tile server and stream it "
                 "(one mosaic per collection; renders like the streaming layer above)"
