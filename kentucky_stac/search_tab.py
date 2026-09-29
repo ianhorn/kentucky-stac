@@ -1,7 +1,7 @@
 import os
 from dataclasses import replace
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from qgis.core import Qgis, QgsApplication, QgsCoordinateReferenceSystem, QgsNetworkAccessManager, QgsProject, QgsSettings
 from qgis.PyQt.QtCore import QSize, Qt, QUrl, pyqtSignal
@@ -10,7 +10,6 @@ from qgis.PyQt.QtNetwork import QNetworkReply, QNetworkRequest
 from qgis.PyQt.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
-    QComboBox,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -32,7 +31,7 @@ from .layers import AddLayersTask, LayerSpec, already_on_map, item_bbox, layer_s
 from .mosaic import BuildMosaicsTask, plan_mosaics
 from .pdal_clip import CropPointCloudsTask, clipped_path
 from .results_layer import select_results, show_results
-from .server_layers import RegisterMosaicsTask, add_search_layer, add_streaming_layer, plan_server_mosaics, styles_for
+from .server_layers import RegisterMosaicsTask, add_search_layer, plan_server_mosaics
 from .stac import Collection, Item, SearchQuery
 from .tasks import PAGE_SIZE, SearchTask
 from .vpc import build_vpc
@@ -118,6 +117,7 @@ class ResultCard(QWidget):
         size: str,
         projection: Optional[str] = None,
         point_count: Optional[str] = None,
+        on_toggled: Optional[Callable[[bool], None]] = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -126,10 +126,17 @@ class ResultCard(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(0)
+        title_row = QHBoxLayout()
+        title_row.setSpacing(4)
+        self.checkbox = QCheckBox()
+        if on_toggled is not None:
+            self.checkbox.toggled.connect(on_toggled)
+        title_row.addWidget(self.checkbox)
         title = QLabel(tile_id)
         title.setStyleSheet("font-weight: bold;")
         title.setWordWrap(True)
-        layout.addWidget(title)
+        title_row.addWidget(title, 1)
+        layout.addLayout(title_row)
         layout.addWidget(QLabel(collection))
         layout.addWidget(QLabel(date))
         # Hidden until set_size() gives it real text -- the catalog never carries a file size at
@@ -148,6 +155,11 @@ class ResultCard(QWidget):
     def set_size(self, text: str) -> None:
         self._size_label.setText(text)
         self._size_label.setVisible(bool(text))
+
+    def set_checked(self, checked: bool) -> None:
+        self.checkbox.blockSignals(True)
+        self.checkbox.setChecked(checked)
+        self.checkbox.blockSignals(False)
 
 
 def _describe(c: Collection) -> str:
@@ -210,18 +222,16 @@ class SearchTab(QWidget):
         self.search_button = WrapButton("Search area of interest")
         self.search_button.clicked.connect(self.search)
 
-        # Statewide streaming layers come from the tile server's per-collection mosaics, so they
-        # only exist for raster collections (imagery/DEM), not point clouds.
-        self.stream_style: Optional[QComboBox] = None
-        self.stream_button: Optional[QPushButton] = None
-        self._stream_collection: Optional[str] = None
-        if not lidar:
-            self.stream_style = QComboBox()
-            self.stream_button = WrapButton("Add streaming layer")
-            self.stream_button.clicked.connect(self.add_streaming)
-
         self.results_status = QLabel()
         self.results_status.setWordWrap(True)
+        # Ctrl+A already selects every result (see add_button's tooltip), but that's not discoverable
+        # -- an explicit button pair matches the collections list's own Select All/Clear Selection.
+        self.select_all_results_button = QPushButton("Select All")
+        self.select_all_results_button.setEnabled(False)
+        self.select_all_results_button.clicked.connect(lambda: self.tree.selectAll())
+        self.clear_results_selection_button = QPushButton("Clear Selection")
+        self.clear_results_selection_button.setEnabled(False)
+        self.clear_results_selection_button.clicked.connect(lambda: self.tree.clearSelection())
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels(_COLUMNS)
         self.tree.setRootIsDecorated(False)
@@ -315,13 +325,12 @@ class SearchTab(QWidget):
         layout.addWidget(QLabel("Collections"))
         layout.addLayout(row)
         layout.addWidget(self.status)
-        if self.stream_button is not None:
-            stream_row = QHBoxLayout()
-            stream_row.addWidget(self.stream_style, 1)
-            stream_row.addWidget(self.stream_button)
-            layout.addLayout(stream_row)
         layout.addWidget(self.search_button)
         layout.addWidget(self.results_status)
+        results_selection_row = QHBoxLayout()
+        results_selection_row.addWidget(self.select_all_results_button)
+        results_selection_row.addWidget(self.clear_results_selection_button)
+        layout.addLayout(results_selection_row)
         layout.addWidget(self.tree, 1)
         layout.addLayout(actions)
         if self.vpc_button is not None:
@@ -393,13 +402,6 @@ class SearchTab(QWidget):
             if self.list.item(i).checkState() == Qt.CheckState.Checked
         ]
 
-    def _selected_collection_title(self, collection_id: str) -> str:
-        for i in range(self.list.count()):
-            item = self.list.item(i)
-            if item.data(Qt.ItemDataRole.UserRole) == collection_id:
-                return item.text()
-        return collection_id
-
     def select_all_collections(self):
         self.list.blockSignals(True)
         for i in range(self.list.count()):
@@ -419,59 +421,27 @@ class SearchTab(QWidget):
 
     # ---- search ---------------------------------------------------------------------------
 
-    # ---- streaming layers -----------------------------------------------------------------
-
-    def _update_stream_controls(self, *_):
-        """Offer the rendering styles of the selected collection (one collection only)."""
-        if self.stream_button is None:
-            return
-        ids = self.selected_collection_ids()
-        collection = ids[0] if len(ids) == 1 else None
-        if collection != self._stream_collection:
-            self._stream_collection = collection
-            previous = self.stream_style.currentData()
-            self.stream_style.clear()
-            for style in styles_for(collection) if collection else []:
-                self.stream_style.addItem(style.label, style.key)
-            index = self.stream_style.findData(previous)
-            if index >= 0:
-                self.stream_style.setCurrentIndex(index)
-        available = self.stream_style.count() > 0
-        self.stream_style.setEnabled(available)
-        self.stream_button.setEnabled(available)
-        self.stream_button.setToolTip(
-            "Stream the whole collection from the tile server as a map layer"
-            if available
-            else "Pick a single imagery or DEM collection above to stream it"
-        )
-
-    def add_streaming(self):
-        ids = self.selected_collection_ids()
-        if len(ids) != 1:
-            return
-        style = next((s for s in styles_for(ids[0]) if s.key == self.stream_style.currentData()), None)
-        if style is None:
-            return
-        layer, message = add_streaming_layer(ids[0], self._selected_collection_title(ids[0]), style)
-        (self._info if layer is not None or "already" in message else self._warn)(message)
-
     def _aoi_is_polygon(self) -> bool:
         return self._aoi.has_aoi and self._aoi.geometry.type() == Qgis.GeometryType.Polygon
 
     def _update_search_enabled(self):
-        self._update_stream_controls()
         polygon = self._aoi_is_polygon()
         self.clip_to_aoi.setEnabled(polygon)
+        # Only applies to the download/mosaic flows -- streaming "Add selected to map" reads tiles
+        # directly from their remote hrefs, with no local file for a GDAL cutline or PDAL crop to
+        # act on.
+        not_valid_note = ' Not valid for "Add selected to map".'
         self.clip_to_aoi.setToolTip(
-            ""
+            not_valid_note.strip()
             if polygon
             else (
                 "Draw a Polygon AOI, or select polygon features, to clip point clouds to its "
-                "shape (a point or line AOI has no area to clip to)"
+                "shape (a point or line AOI has no area to clip to)."
                 if self._lidar
                 else "Draw a Polygon AOI, or select features, to clip a mosaic to its shape "
-                "(a point or line AOI has no area to clip to)"
+                "(a point or line AOI has no area to clip to)."
             )
+            + not_valid_note
         )
         has_selection = bool(self.selected_collection_ids())
         ready = self._has_collections and has_selection and self._aoi.has_aoi and self._task is None
@@ -547,6 +517,7 @@ class SearchTab(QWidget):
                 format_size(asset.file_size) if asset else "",
                 projection=_projection_label(item),
                 point_count=_point_count_label(item),
+                on_toggled=lambda checked, row=row: row.setSelected(checked),
             )
             self.tree.setItemWidget(row, 0, card)
         self.tree.resizeColumnToContents(0)
@@ -557,6 +528,8 @@ class SearchTab(QWidget):
         self.tree.setIconSize(QSize(self._icon_size, self._icon_size))
         self.tree.setColumnWidth(len(_COLUMNS) - 1, self._icon_size + 8)
         self._fetch_thumbnails()
+        self.select_all_results_button.setEnabled(True)
+        self.clear_results_selection_button.setEnabled(True)
 
         count = len(self._items)
         text = f"{count} tile{'s' if count != 1 else ''} found"
@@ -571,6 +544,8 @@ class SearchTab(QWidget):
         self._fids = []
         self.tree.clear()
         select_results(self._kind, [])
+        self.select_all_results_button.setEnabled(False)
+        self.clear_results_selection_button.setEnabled(False)
 
     def _fetch_thumbnails(self):
         """Populate each result row's Preview column with its STAC thumbnail asset, fetched
@@ -613,7 +588,17 @@ class SearchTab(QWidget):
     def _on_selection_changed(self):
         rows = [self.tree.indexOfTopLevelItem(i) for i in self.tree.selectedItems()]
         select_results(self._kind, [self._fids[r] for r in rows if r < len(self._fids) and self._fids[r] is not None])
+        self._sync_card_checkboxes()
         self._update_add_enabled()
+
+    def _sync_card_checkboxes(self):
+        """Keep each row's checkbox in step with the tree's own selection, however it changed --
+        clicking a row, Ctrl-click, Select All/Clear Selection, or the checkbox itself."""
+        for i in range(self.tree.topLevelItemCount()):
+            row = self.tree.topLevelItem(i)
+            card = self.tree.itemWidget(row, 0)
+            if isinstance(card, ResultCard):
+                card.set_checked(row.isSelected())
 
     def _busy(self) -> bool:
         return any(

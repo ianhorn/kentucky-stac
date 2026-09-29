@@ -1,9 +1,6 @@
-"""Streaming layers from a titiler-pgstac server: whole-collection statewide mosaics, and mosaics
-registered on the fly and restricted to a chosen set of tiles.
+"""Streaming layers from a titiler-pgstac server, restricted to a chosen set of tiles.
 
-The server already holds each Kentucky From Above collection as a ready-made mosaic, so a statewide
-layer needs no search: QGIS just reads XYZ tiles from `/collections/{id}/tiles/WebMercatorQuad/{z}/{x}/{y}`.
-A mosaic of specific tiles instead registers a search scoped to their ids (POST /searches/register,
+A mosaic of specific tiles registers a search scoped to their ids (POST /searches/register,
 idempotent -- the same ids/collection hash to the same search and reuse the existing one) and reads
 XYZ tiles from `/searches/{search_id}/tiles/...`. A tile outside the registered set comes back 204 No
 Content, which QGIS's XYZ provider treats as an empty tile rather than an error.
@@ -64,10 +61,6 @@ def default_style_for(collection_id: str) -> Optional[Style]:
     return styles[0] if styles else None
 
 
-def tile_url(base: str, collection_id: str, style: Style, fmt: str = "png") -> str:
-    return f"{base.rstrip('/')}/collections/{collection_id}/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}.{fmt}?{style.query}"
-
-
 def search_tile_url(base: str, search_id: str, style: Style, fmt: str = "png") -> str:
     return f"{base.rstrip('/')}/searches/{search_id}/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}.{fmt}?{style.query}"
 
@@ -76,10 +69,6 @@ def xyz_uri(url: str, zmin: int = 0, zmax: int = 22) -> str:
     """A QGIS XYZ data source URI. QGIS reads the `url=` value as-is, except that `&` would end it
     and so must be written as %26; fully percent-encoding the URL would break it."""
     return f"type=xyz&url={url.replace('&', '%26')}&zmax={zmax}&zmin={zmin}"
-
-
-def layer_name(collection_title: str, style: Style) -> str:
-    return f"Ky STAC {collection_title} (streaming, {style.label.split(' (')[0].lower()})"
 
 
 def mosaic_layer_name(collection_id: str, style: Style, tile_count: int) -> str:
@@ -101,13 +90,6 @@ def add_xyz_layer(url: str, name: str, project: Optional[QgsProject] = None) -> 
     project.addMapLayer(layer, False)
     group.addLayer(layer)
     return layer, f"Added {layer.name()}."
-
-
-def add_streaming_layer(
-    collection_id: str, collection_title: str, style: Style, project: Optional[QgsProject] = None
-) -> Tuple[Optional[QgsRasterLayer], str]:
-    """Add a whole-collection streaming XYZ layer to the "Ky STAC" group."""
-    return add_xyz_layer(tile_url(tiler_url(), collection_id, style), layer_name(collection_title, style), project)
 
 
 def add_search_layer(
