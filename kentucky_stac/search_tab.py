@@ -124,6 +124,20 @@ class SearchTab(QWidget):
         self.add_button.setEnabled(False)
         self.add_button.clicked.connect(self.add_to_map)
 
+        # Streams several selected tiles directly into one combined virtual point cloud layer, no
+        # download involved -- the same VPC format as the download-then-combine path (vpc.py), just
+        # pointed at each tile's remote href instead of a local file. Only COPC tiles can stream
+        # (see layer_specs); plain LAZ/LAS is skipped, same restriction as "Add selected to map".
+        self.vpc_button: Optional[QPushButton] = None
+        if lidar:
+            self.vpc_button = QPushButton("Add selected as VPC")
+            self.vpc_button.setToolTip(
+                "Combine the selected tiles into one virtual point cloud layer, streamed directly "
+                "with no download (select two or more COPC tiles)"
+            )
+            self.vpc_button.setEnabled(False)
+            self.vpc_button.clicked.connect(self.add_selected_as_vpc)
+
         self.download_button = QPushButton("Download selected...")
         self.download_button.setToolTip("Save the selected tiles to a folder")
         self.download_button.setEnabled(False)
@@ -198,6 +212,8 @@ class SearchTab(QWidget):
         layout.addWidget(self.results_status)
         layout.addWidget(self.tree, 1)
         layout.addLayout(actions)
+        if self.vpc_button is not None:
+            layout.addWidget(self.vpc_button)
         if self.mosaic_button is not None:
             layout.addWidget(self.mosaic_button)
         if self.server_mosaic_button is not None:
@@ -449,6 +465,8 @@ class SearchTab(QWidget):
         enabled = bool(self.tree.selectedItems()) and not self._busy()
         self.add_button.setEnabled(enabled)
         self.download_button.setEnabled(enabled)
+        if self.vpc_button is not None:
+            self.vpc_button.setEnabled(enabled)
         if self.mosaic_button is not None:
             self.mosaic_button.setEnabled(enabled)
         if self.server_mosaic_button is not None:
@@ -505,6 +523,45 @@ class SearchTab(QWidget):
             self._warn(text)
         else:
             self._info(text)
+
+    def add_selected_as_vpc(self):
+        """Combine the selected tiles into one virtual point cloud layer, streamed directly from
+        their remote hrefs -- same VPC format as the download-then-combine path (see _add_as_vpc),
+        no local file involved except the small .vpc index itself. Only COPC tiles can stream, same
+        restriction as add_to_map's layer_specs()."""
+        if self._busy():
+            return
+        items = self.selected_items()
+        entries = []
+        skipped = 0
+        for item in items:
+            asset = primary_asset(item, True)
+            if asset is not None and asset.href and asset.is_copc:
+                entries.append((item, asset.href))
+            else:
+                skipped += 1
+        if len(entries) < 2:
+            self._info("Select two or more streamable (COPC) tiles to combine into a virtual point cloud.")
+            return
+        settings = QgsSettings()
+        folder = QFileDialog.getExistingDirectory(
+            self, "Save the virtual point cloud (.vpc) to", str(settings.value("kentucky_stac/vpc_dir", "") or "")
+        )
+        if not folder:
+            return
+        settings.setValue("kentucky_stac/vpc_dir", folder)
+
+        vpc_path = os.path.join(folder, f"kentucky_stac_pointcloud_{datetime.now().strftime('%H%M%S')}.vpc")
+        count = build_vpc(entries, vpc_path)
+        if count < 2:
+            self._warn("Could not build a combined virtual point cloud (missing tile footprints); nothing added.")
+            return
+        bbox = union_bbox([b for b in (item_bbox(e[0]) for e in entries) if b is not None])
+        spec = LayerSpec(f"Ky STAC point cloud ({count} tiles)", vpc_path, "vpc", bbox)
+        notes = [f"streamed directly (no download), saved to {os.path.basename(vpc_path)}"]
+        if skipped:
+            notes.append(f"{skipped} tile{'s' if skipped != 1 else ''} plain LAZ/LAS, which QGIS can't stream; left out")
+        self._run_add([spec], notes)
 
     # ---- mosaic ---------------------------------------------------------------------------
 
