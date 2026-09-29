@@ -84,10 +84,19 @@ class AoiBar(QGroupBox):
         geometry = QgsGeometry.fromRect(extent)
         label = "Map extent AOI"
         self._state.set(geometry, crs, label)
+        self._release_active_tool()
         try:
             add_aoi_feature(geometry, crs, label)
         except Exception as e:  # the AOI itself is set; only the scratch-layer record failed
             self._notify(f"Set the AOI, but could not save it to a layer: {e}", Qgis.MessageLevel.Warning)
+
+    def _release_active_tool(self):
+        """Deactivate whichever of this bar's own tools (if any) is currently active on the canvas --
+        used whenever the AOI is set/cleared some other way (Current extent, Clear), so a leftover
+        checked tool button doesn't look "stuck on"."""
+        current = self._canvas.mapTool()
+        if any(current is tool for _button, tool in self._tool_buttons.values()):
+            self._canvas.unsetMapTool(current)
 
     def _notify(self, text: str, level):
         if self._bar is not None:
@@ -98,6 +107,7 @@ class AoiBar(QGroupBox):
         for layer in self._canvas.layers():
             if isinstance(layer, QgsVectorLayer) and layer.isSpatial():
                 layer.removeSelection()
+        self._release_active_tool()
 
     def shutdown(self):
         """Release the map tools and their rubber bands (plugin unload)."""

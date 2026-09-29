@@ -123,6 +123,10 @@ class DrawAoiTool(QgsMapTool):
             add_aoi_feature(geometry, crs, label)
         except Exception as e:  # the AOI itself is set; only the scratch-layer record failed
             _notify(self._bar, f"Drew the AOI, but could not save it to a layer: {e}", Qgis.MessageLevel.Warning)
+        # One-shot: each draw replaces the AOI outright rather than accumulating, so there's no
+        # workflow that needs the tool to stay active -- deactivate so its toolbar button doesn't
+        # stay visibly "stuck on" once the AOI is set.
+        self.canvas().unsetMapTool(self)
 
 
 def collect_geometries(
@@ -225,6 +229,9 @@ class SelectFeaturesTool(QgsMapTool):
             if ignored:
                 description += f" (ignored {ignored} lower-dimension feature{'s' if ignored != 1 else ''})"
             self._state.set(union, canvas_crs, description)
+            # One-shot, same as DrawAoiTool: each selection replaces the AOI outright, so there's no
+            # workflow that needs the tool to stay active after a successful pick.
+            self.canvas().unsetMapTool(self)
             return True
         except Exception as e:
             _notify(self._bar, f"Could not use the selected features as an AOI: {e}", Qgis.MessageLevel.Warning)
