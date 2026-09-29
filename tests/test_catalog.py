@@ -36,6 +36,28 @@ def test_primary_asset_for_imagery_is_data_asset():
     assert primary_asset(item, lidar=False).href == "d.tif"
 
 
+def test_thumbnail_href_prefers_the_items_own_asset():
+    from kentucky_stac.catalog import thumbnail_href
+    from kentucky_stac.stac import Item
+
+    item = Item.from_dict({"collection": "dem-phase3", "id": "x", "assets": {"thumbnail": {"href": "t.png"}}})
+    assert thumbnail_href(item, lidar=False) == "t.png"
+    assert thumbnail_href(item, lidar=True) == "t.png"
+
+
+def test_thumbnail_href_reconstructs_for_lidar_only():
+    from kentucky_stac.catalog import LIDAR_THUMBNAIL_BASE, thumbnail_href
+    from kentucky_stac.stac import Item
+
+    # A LiDAR item's /search response never carries a thumbnail asset (see thumbnail_href's
+    # docstring) -- falls back to the known URL convention.
+    item = Item.from_dict({"collection": "laz-phase3", "id": "N046E341_LAS_Phase3.copc", "assets": {"pointcloud": {"href": "d.laz"}}})
+    assert thumbnail_href(item, lidar=True) == f"{LIDAR_THUMBNAIL_BASE}/collections/laz-phase3/thumbnails/N046E341_LAS_Phase3.copc.png"
+    # Same missing-thumbnail item, but NOT lidar -- no guessing, since imagery's own URL scheme
+    # varies by collection and isn't reliably reconstructable.
+    assert thumbnail_href(item, lidar=False) is None
+
+
 def test_format_size():
     from kentucky_stac.catalog import format_size
 

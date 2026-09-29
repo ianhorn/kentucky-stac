@@ -3,8 +3,10 @@ from dataclasses import replace
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from qgis.core import Qgis, QgsApplication, QgsProject, QgsSettings
-from qgis.PyQt.QtCore import Qt, pyqtSignal
+from qgis.core import Qgis, QgsApplication, QgsNetworkAccessManager, QgsProject, QgsSettings
+from qgis.PyQt.QtCore import QSize, Qt, QUrl, pyqtSignal
+from qgis.PyQt.QtGui import QIcon, QImage, QPixmap
+from qgis.PyQt.QtNetwork import QNetworkReply, QNetworkRequest
 from qgis.PyQt.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -24,7 +26,7 @@ from qgis.PyQt.QtWidgets import (
 )
 
 from .aoi import AoiState, wkt_parts
-from .catalog import format_size, primary_asset
+from .catalog import format_size, primary_asset, thumbnail_href
 from .downloads import DownloadJob, DownloadManager, SizesTask, plan_downloads
 from .layers import AddLayersTask, LayerSpec, already_on_map, item_bbox, layer_specs, local_specs, union_bbox
 from .mosaic import BuildMosaicsTask, plan_mosaics
@@ -35,7 +37,8 @@ from .stac import Collection, Item, SearchQuery
 from .tasks import PAGE_SIZE, SearchTask
 from .vpc import build_vpc
 
-_COLUMNS = ["Tile", "Collection", "Date", "Size"]
+_COLUMNS = ["Tile", "Collection", "Date", "Size", "Preview"]
+_THUMBNAIL_SIZE = 64
 CONFIRM_ABOVE = 25  # ask before adding more layers than this at once
 
 
@@ -116,8 +119,10 @@ class SearchTab(QWidget):
         self.tree.setRootIsDecorated(False)
         self.tree.setAlternatingRowColors(True)
         self.tree.setUniformRowHeights(True)
+        self.tree.setIconSize(QSize(_THUMBNAIL_SIZE, _THUMBNAIL_SIZE))
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.tree.itemSelectionChanged.connect(self._on_selection_changed)
+        self._thumb_replies: List[QNetworkReply] = []
 
         self.add_button = QPushButton("Add selected to map")
         self.add_button.setToolTip("Select tiles in the list above (Ctrl+A selects all)")
@@ -424,11 +429,13 @@ class SearchTab(QWidget):
         for item in self._items:
             asset = primary_asset(item, self._lidar)
             row = QTreeWidgetItem(
-                [item.id, item.collection or "", (item.datetime or "")[:10], format_size(asset.file_size) if asset else ""]
+                [item.id, item.collection or "", (item.datetime or "")[:10], format_size(asset.file_size) if asset else "", ""]
             )
             self.tree.addTopLevelItem(row)
-        for column in range(len(_COLUMNS)):
+        for column in range(len(_COLUMNS) - 1):
             self.tree.resizeColumnToContents(column)
+        self.tree.setColumnWidth(len(_COLUMNS) - 1, _THUMBNAIL_SIZE + 8)
+        self._fetch_thumbnails()
 
         count = len(self._items)
         text = f"{count} tile{'s' if count != 1 else ''} found"
@@ -438,10 +445,49 @@ class SearchTab(QWidget):
         self._update_search_enabled()
 
     def _clear_results(self):
+        self._cancel_thumbnail_fetches()
         self._items = []
         self._fids = []
         self.tree.clear()
         select_results(self._kind, [])
+
+    def _fetch_thumbnails(self):
+        """Populate each result row's Preview column with its STAC thumbnail asset, fetched
+        asynchronously (QgsNetworkAccessManager, non-blocking) so a slow/failed fetch for one tile
+        never holds up the others or the UI."""
+        for row, item in enumerate(self._items):
+            href = thumbnail_href(item, self._lidar)
+            if not href:
+                continue
+            reply = QgsNetworkAccessManager.instance().get(QNetworkRequest(QUrl(href)))
+            self._thumb_replies.append(reply)
+            reply.finished.connect(lambda reply=reply, row=row: self._on_thumbnail_fetched(reply, row))
+
+    def _on_thumbnail_fetched(self, reply: QNetworkReply, row: int):
+        if reply in self._thumb_replies:
+            self._thumb_replies.remove(reply)
+        ok = reply.error() == QNetworkReply.NetworkError.NoError
+        data = bytes(reply.readAll()) if ok else b""
+        reply.deleteLater()
+        if not ok or row >= self.tree.topLevelItemCount():
+            return
+        image = QImage()
+        if not image.loadFromData(data):
+            return
+        pixmap = QPixmap.fromImage(image).scaled(
+            _THUMBNAIL_SIZE, _THUMBNAIL_SIZE, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+        )
+        self.tree.topLevelItem(row).setIcon(len(_COLUMNS) - 1, QIcon(pixmap))
+
+    def _cancel_thumbnail_fetches(self):
+        for reply in self._thumb_replies:
+            try:
+                reply.finished.disconnect()
+            except TypeError:
+                pass
+            reply.abort()
+            reply.deleteLater()
+        self._thumb_replies = []
 
     def _on_selection_changed(self):
         rows = [self.tree.indexOfTopLevelItem(i) for i in self.tree.selectedItems()]
@@ -857,6 +903,7 @@ class SearchTab(QWidget):
             self._bar.pushMessage("Kentucky STAC", text, level=Qgis.MessageLevel.Info, duration=8)
 
     def shutdown(self):
+        self._cancel_thumbnail_fetches()
         for attr in ("_task", "_add_task", "_size_task", "_mosaic_task", "_register_task", "_clip_task"):
             task = getattr(self, attr)
             if task is not None:
