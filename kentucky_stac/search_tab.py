@@ -282,7 +282,7 @@ class SearchTab(QWidget):
         # Point clouds have no VRT equivalent, so only the imagery/DEM tab gets a mosaic button.
         self.mosaic_button: Optional[QPushButton] = None
         if not lidar:
-            self.mosaic_button = WrapButton("Export Virtual Raster Tile (VRT)")
+            self.mosaic_button = WrapButton("Export VRT")
             self.mosaic_button.setToolTip(
                 "Stitch the selected tiles into one virtual raster, one per collection "
                 "(select two or more tiles)"
@@ -317,13 +317,11 @@ class SearchTab(QWidget):
         # warp cutline for a raster mosaic, PDAL filters.crop (see pdal_clip.py) for downloaded point
         # clouds. Only makes sense for a polygon AOI; disabled otherwise (see _update_search_enabled).
         self.clip_to_aoi = QCheckBox("Clip to area of interest")
-        self.clip_to_aoi.setChecked(True)
         self.add_when_done = QCheckBox(
             "Add downloaded files to the map, combined into one virtual point cloud layer"
             if lidar
             else "Add downloaded files to the map"
         )
-        self.add_when_done.setChecked(True)
         self.progress = QProgressBar()
         self.progress.setVisible(False)
         self.cancel_button = QPushButton("Cancel")
@@ -360,10 +358,13 @@ class SearchTab(QWidget):
         layout.addLayout(actions)
         if self.vpc_button is not None:
             layout.addWidget(self.vpc_button)
-        if self.mosaic_button is not None:
-            layout.addWidget(self.mosaic_button)
-        if self.mosaicjson_button is not None:
-            layout.addWidget(self.mosaicjson_button)
+        if self.mosaic_button is not None or self.mosaicjson_button is not None:
+            export_row = QHBoxLayout()
+            if self.mosaic_button is not None:
+                export_row.addWidget(self.mosaic_button, 1)
+            if self.mosaicjson_button is not None:
+                export_row.addWidget(self.mosaicjson_button, 1)
+            layout.addLayout(export_row)
         if self.server_mosaic_button is not None:
             layout.addWidget(self.server_mosaic_button)
         layout.addWidget(self.clip_to_aoi)
@@ -794,7 +795,7 @@ class SearchTab(QWidget):
 
     def _on_mosaics_built(self, built: list, failed: list):
         self._mosaic_task = None
-        self.mosaic_button.setText("Export Virtual Raster Tile (VRT)")
+        self.mosaic_button.setText("Export VRT")
         if failed:
             first = f"{failed[0][0]}: {failed[0][1]}"
             self._warn(f"{len(failed)} mosaic{'s' if len(failed) != 1 else ''} failed (first: {first}).")
