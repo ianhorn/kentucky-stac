@@ -56,12 +56,25 @@ def plan_mosaics(items: Iterable[Item], folder: str, stamp: str) -> Tuple[List[M
 class BuildMosaicsTask(QgsTask):
     """Build the VRT files on a worker thread (each source is opened over the network).
     `callback(built, failed)` runs on the main thread: `built` is a list of MosaicSpec, `failed` a
-    list of (name, error), unless the task was cancelled."""
+    list of (name, error), unless the task was cancelled.
 
-    def __init__(self, specs: List[MosaicSpec], callback: Callable[[List[MosaicSpec], List[Tuple[str, str]]], None]):
+    `clip_wkt`, if given, is a polygon in lon/lat (EPSG:4326) that every mosaic is cropped to (a
+    GDAL warp cutline), so the result covers the AOI's actual shape rather than the tiles' full
+    rectangular extent. The pixels outside it come back as nodata/masked, not just cropped to a
+    bounding box. Building is still lazy -- nothing is downloaded here beyond what BuildVRT already
+    reads (each tile's header), and reading the result still pulls pixels from the remote tiles.
+    """
+
+    def __init__(
+        self,
+        specs: List[MosaicSpec],
+        callback: Callable[[List[MosaicSpec], List[Tuple[str, str]]], None],
+        clip_wkt: Optional[str] = None,
+    ):
         super().__init__(f"Building {len(specs)} mosaic{'s' if len(specs) != 1 else ''}")
         self._specs = specs
         self._callback = callback
+        self._clip_wkt = clip_wkt
         self.built: List[MosaicSpec] = []
         self.failed: List[Tuple[str, str]] = []
 
@@ -79,17 +92,54 @@ class BuildMosaicsTask(QgsTask):
                 return False
             try:
                 os.makedirs(os.path.dirname(spec.vrt_path), exist_ok=True)
-                dataset = gdal.BuildVRT(spec.vrt_path, list(spec.sources), options=options)
-                if dataset is None:
-                    self.failed.append((spec.name, gdal.GetLastErrorMsg() or "could not build the VRT"))
-                    continue
-                dataset.FlushCache()
-                dataset = None  # closing writes the file
+                if self._clip_wkt:
+                    self._build_clipped(gdal, spec)
+                else:
+                    dataset = gdal.BuildVRT(spec.vrt_path, list(spec.sources), options=options)
+                    if dataset is None:
+                        self.failed.append((spec.name, gdal.GetLastErrorMsg() or "could not build the VRT"))
+                        continue
+                    dataset.FlushCache()
+                    dataset = None  # closing writes the file
                 self.built.append(spec)
             except Exception as e:
                 self.failed.append((spec.name, str(e)))
             self.setProgress(100.0 * (i + 1) / len(self._specs))
         return True
+
+    def _build_clipped(self, gdal, spec: MosaicSpec) -> None:
+        """Plain mosaic first, then warp that with a cutline -- GDAL's own recommended order, and
+        much faster than warping every remote source directly.
+
+        The intermediate is written next to the final VRT and kept, not a temp file that gets
+        cleaned up: a warped VRT references its source dataset by path (unlike a plain BuildVRT
+        mosaic, whose <SimpleSource> entries point straight at the remote tiles), so deleting the
+        intermediate leaves the final VRT completely unreadable -- confirmed directly: QGIS reports
+        the layer invalid the moment the intermediate file is gone, not just missing some pixels.
+        """
+        options = gdal.BuildVRTOptions(resolution="highest")
+        root, _ext = os.path.splitext(spec.vrt_path)
+        unclipped = f"{root}.unclipped.vrt"
+        dataset = gdal.BuildVRT(unclipped, list(spec.sources), options=options)
+        if dataset is None:
+            raise RuntimeError(gdal.GetLastErrorMsg() or "could not build the VRT")
+        native_srs = dataset.GetProjection()
+        dataset.FlushCache()
+        dataset = None
+
+        clipped = gdal.Warp(
+            spec.vrt_path,
+            [unclipped],
+            format="VRT",
+            cutlineWKT=self._clip_wkt,
+            cutlineSRS="EPSG:4326",
+            cropToCutline=True,
+            dstSRS=native_srs or None,
+        )
+        if clipped is None:
+            raise RuntimeError(gdal.GetLastErrorMsg() or "could not clip the mosaic to the area of interest")
+        clipped.FlushCache()
+        clipped = None
 
     def finished(self, result: bool) -> None:
         if not self.isCanceled():

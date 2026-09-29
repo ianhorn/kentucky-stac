@@ -192,13 +192,11 @@ class SearchTab(QWidget):
             )
             self.server_mosaic_button.setEnabled(False)
             self.server_mosaic_button.clicked.connect(self.add_server_mosaic)
-        # Crops each downloaded tile to the AOI's actual shape via PDAL (see pdal_clip.py) before
-        # combining into a VPC / adding it, rather than the tiles' full rectangular extent. Only
-        # makes sense for a polygon AOI -- a point/line AOI has no area to crop by.
-        self.clip_to_aoi: Optional[QCheckBox] = None
-        if lidar:
-            self.clip_to_aoi = QCheckBox("Clip to area of interest")
-            self.clip_to_aoi.setChecked(True)
+        # Crops to the AOI's actual shape rather than the tiles' full rectangular extent -- a GDAL
+        # warp cutline for a raster mosaic, PDAL filters.crop (see pdal_clip.py) for downloaded point
+        # clouds. Only makes sense for a polygon AOI; disabled otherwise (see _update_search_enabled).
+        self.clip_to_aoi = QCheckBox("Clip to area of interest")
+        self.clip_to_aoi.setChecked(True)
         self.add_when_done = QCheckBox(
             "Add downloaded files to the map, combined into one virtual point cloud layer"
             if lidar
@@ -246,8 +244,7 @@ class SearchTab(QWidget):
             layout.addWidget(self.mosaic_button)
         if self.server_mosaic_button is not None:
             layout.addWidget(self.server_mosaic_button)
-        if self.clip_to_aoi is not None:
-            layout.addWidget(self.clip_to_aoi)
+        layout.addWidget(self.clip_to_aoi)
         layout.addWidget(self.add_when_done)
         layout.addLayout(progress_row)
 
@@ -377,15 +374,19 @@ class SearchTab(QWidget):
 
     def _update_search_enabled(self):
         self._update_stream_controls()
-        if self.clip_to_aoi is not None:
-            polygon = self._aoi_is_polygon()
-            self.clip_to_aoi.setEnabled(polygon)
-            self.clip_to_aoi.setToolTip(
-                ""
-                if polygon
-                else "Draw a Polygon AOI, or select polygon features, to clip point clouds to its "
+        polygon = self._aoi_is_polygon()
+        self.clip_to_aoi.setEnabled(polygon)
+        self.clip_to_aoi.setToolTip(
+            ""
+            if polygon
+            else (
+                "Draw a Polygon AOI, or select polygon features, to clip point clouds to its "
                 "shape (a point or line AOI has no area to clip to)"
+                if self._lidar
+                else "Draw a Polygon AOI, or select features, to clip a mosaic to its shape "
+                "(a point or line AOI has no area to clip to)"
             )
+        )
         has_selection = bool(self.selected_collection_ids())
         ready = self._has_collections and has_selection and self._aoi.has_aoi and self._task is None
         self.search_button.setEnabled(ready)
@@ -660,9 +661,18 @@ class SearchTab(QWidget):
         if left_out:
             n = len(left_out)
             notes.append(f"{n} tile{'s' if n != 1 else ''} left out (alone in {'their' if n != 1 else 'its'} collection)")
+
+        clip_wkt = None
+        if self.clip_to_aoi.isChecked() and self._aoi_is_polygon():
+            try:
+                clip_wkt = self._aoi.geometry_wgs84(QgsProject.instance().transformContext()).asWkt()
+                notes.append("clipped to the area of interest")
+            except Exception as e:
+                self._warn(f"Could not use the area of interest to clip the mosaic, building it unclipped instead: {e}")
+
         self._pending_notes = notes
         self.mosaic_button.setText("Building mosaic...")
-        self._mosaic_task = BuildMosaicsTask(specs, self._on_mosaics_built)
+        self._mosaic_task = BuildMosaicsTask(specs, self._on_mosaics_built, clip_wkt=clip_wkt)
         self._update_add_enabled()
         QgsApplication.taskManager().addTask(self._mosaic_task)
 
@@ -815,7 +825,10 @@ class SearchTab(QWidget):
         paths = [f for f in self._download_files if os.path.exists(f)]
         if not paths:
             return
-        if self.clip_to_aoi is not None and self.clip_to_aoi.isChecked() and self._aoi_is_polygon():
+        # PDAL clipping only applies to downloaded point clouds (see pdal_clip.py) -- the imagery/DEM
+        # tab's own clip_to_aoi only applies to the mosaic-building flow (start_mosaic), not a plain
+        # download, which has no clipping implementation of its own.
+        if self._lidar and self.clip_to_aoi.isChecked() and self._aoi_is_polygon():
             self._start_clip(paths)
             return
         self._add_downloaded(paths, [])
