@@ -66,19 +66,36 @@ class WrapButton(QPushButton):
 
 
 def _projection_label(item: Item) -> Optional[str]:
-    """A short CRS label from the item's own STAC properties. Imagery/DEM items carry a plain
-    `proj:epsg`; LiDAR items don't (their compound horizontal+vertical CRS has no single EPSG code
-    to name -- confirmed live, every laz-phaseN item's properties have `proj:wkt2` only), so those
-    fall back to resolving the WKT and using QGIS's own name for it."""
+    """A short EPSG-code label from the item's own STAC properties, to save space in the results
+    list -- plain "EPSG:N" for imagery/DEM (a single proj:epsg), or "EPSG:horizontal/EPSG:vertical"
+    for a LiDAR item's compound CRS. LiDAR items carry no proj:epsg at all (confirmed live: every
+    laz-phaseN item's properties have proj:wkt2 only) -- GDAL's osr resolves that compound WKT's
+    horizontal (PROJCS) and vertical (VERT_CS) authority codes separately (verified live:
+    EPSG:6473/EPSG:6360 for NAD83(2011) KY Single Zone + NAVD88 height), which QGIS's own CRS class
+    can't do (a compound CRS's authid() comes back empty)."""
     epsg = item.properties.get("proj:epsg")
     if epsg:
         return f"EPSG:{epsg}"
     wkt = item.properties.get("proj:wkt2")
-    if wkt:
-        crs = QgsCoordinateReferenceSystem.fromWkt(wkt)
-        if crs.isValid():
-            return crs.authid() or crs.description()
-    return None
+    if not wkt:
+        return None
+    from osgeo import osr
+
+    srs = osr.SpatialReference()
+    if srs.ImportFromWkt(wkt) != 0:
+        return None
+    if srs.IsCompound():
+        horizontal = srs.GetAuthorityCode("PROJCS") or srs.GetAuthorityCode("GEOGCS")
+        vertical = srs.GetAuthorityCode("VERT_CS")
+        if horizontal and vertical:
+            return f"EPSG:{horizontal}/EPSG:{vertical}"
+        if horizontal:
+            return f"EPSG:{horizontal}"
+    code = srs.GetAuthorityCode(None)
+    if code:
+        return f"EPSG:{code}"
+    crs = QgsCoordinateReferenceSystem.fromWkt(wkt)
+    return crs.description() if crs.isValid() else None
 
 
 def _point_count_label(item: Item) -> Optional[str]:
@@ -115,7 +132,11 @@ class ResultCard(QWidget):
         layout.addWidget(title)
         layout.addWidget(QLabel(collection))
         layout.addWidget(QLabel(date))
+        # Hidden until set_size() gives it real text -- the catalog never carries a file size at
+        # search time (only a later download's size-check does), so an always-empty label here would
+        # leave a permanent blank line in every card.
         self._size_label = QLabel(size)
+        self._size_label.setVisible(bool(size))
         layout.addWidget(self._size_label)
         if projection:
             proj_label = QLabel(projection)
@@ -126,6 +147,7 @@ class ResultCard(QWidget):
 
     def set_size(self, text: str) -> None:
         self._size_label.setText(text)
+        self._size_label.setVisible(bool(text))
 
 
 def _describe(c: Collection) -> str:
@@ -205,7 +227,8 @@ class SearchTab(QWidget):
         self.tree.setRootIsDecorated(False)
         self.tree.setAlternatingRowColors(True)
         self.tree.setUniformRowHeights(True)
-        self.tree.setIconSize(QSize(_THUMBNAIL_SIZE, _THUMBNAIL_SIZE))
+        self._icon_size = _THUMBNAIL_SIZE  # grown to match each card's real height once results are shown
+        self.tree.setIconSize(QSize(self._icon_size, self._icon_size))
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.tree.itemSelectionChanged.connect(self._on_selection_changed)
         self._thumb_replies: List[QNetworkReply] = []
@@ -346,13 +369,13 @@ class SearchTab(QWidget):
             self.status.setText(f"No {self._what} collections found.")
             self._update_search_enabled()
             return
-        # All collections start checked, matching the old dropdown's "All <what>" default.
+        # All collections start unchecked -- pick one or more before searching.
         self.list.blockSignals(True)
         for c in collections:
             item = QListWidgetItem(c.title_or_id)
             item.setData(Qt.ItemDataRole.UserRole, c.id)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(Qt.CheckState.Checked)
+            item.setCheckState(Qt.CheckState.Unchecked)
             item.setToolTip(_describe(c))
             self.list.addItem(item)
         self.list.blockSignals(False)
@@ -527,7 +550,12 @@ class SearchTab(QWidget):
             )
             self.tree.setItemWidget(row, 0, card)
         self.tree.resizeColumnToContents(0)
-        self.tree.setColumnWidth(len(_COLUMNS) - 1, _THUMBNAIL_SIZE + 8)
+        # Grow the thumbnail to fill the same height as the stacked text card next to it, instead of
+        # a small fixed square floating in a much taller row -- measured after layout since the
+        # card's real height depends on which optional lines it ends up showing.
+        self._icon_size = max(_THUMBNAIL_SIZE, self.tree.sizeHintForRow(0))
+        self.tree.setIconSize(QSize(self._icon_size, self._icon_size))
+        self.tree.setColumnWidth(len(_COLUMNS) - 1, self._icon_size + 8)
         self._fetch_thumbnails()
 
         count = len(self._items)
@@ -568,7 +596,7 @@ class SearchTab(QWidget):
         if not image.loadFromData(data):
             return
         pixmap = QPixmap.fromImage(image).scaled(
-            _THUMBNAIL_SIZE, _THUMBNAIL_SIZE, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+            self._icon_size, self._icon_size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
         )
         self.tree.topLevelItem(row).setIcon(len(_COLUMNS) - 1, QIcon(pixmap))
 
