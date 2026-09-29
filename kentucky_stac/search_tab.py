@@ -3,7 +3,15 @@ from dataclasses import replace
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from qgis.core import Qgis, QgsApplication, QgsCoordinateReferenceSystem, QgsNetworkAccessManager, QgsProject, QgsSettings
+from qgis.core import (
+    Qgis,
+    QgsApplication,
+    QgsCoordinateReferenceSystem,
+    QgsNetworkAccessManager,
+    QgsProject,
+    QgsSettings,
+    QgsUnitTypes,
+)
 from qgis.PyQt.QtCore import QSize, Qt, QUrl, pyqtSignal
 from qgis.PyQt.QtGui import QIcon, QImage, QPixmap
 from qgis.PyQt.QtNetwork import QNetworkReply, QNetworkRequest
@@ -29,6 +37,7 @@ from .catalog import format_size, primary_asset, thumbnail_href
 from .downloads import DownloadJob, DownloadManager, SizesTask, plan_downloads
 from .layers import AddLayersTask, LayerSpec, already_on_map, item_bbox, layer_specs, local_specs, union_bbox
 from .mosaic import BuildMosaicsTask, plan_mosaics
+from .mosaicjson import native_gsd, plan_mosaicjson, write_mosaicjson
 from .pdal_clip import CropPointCloudsTask, clipped_path
 from .results_layer import select_results, show_results
 from .server_layers import RegisterMosaicsTask, add_search_layer, plan_server_mosaics
@@ -102,6 +111,21 @@ def _projection_label(item: Item) -> Optional[str]:
 def _point_count_label(item: Item) -> Optional[str]:
     count = item.properties.get("pc:count")
     return f"{int(count):,} points" if count else None
+
+
+def _gsd_meters_for(item: Item) -> Optional[float]:
+    """An item's ground sample distance in meters, for MosaicJSON's maxzoom (mosaicjson.py). Needs a
+    units-of-CRS-to-meters conversion, which needs QGIS's CRS database -- kept out of mosaicjson.py
+    itself (pure Python, unit-testable without a QgsApplication) and injected from here instead."""
+    gsd_native = native_gsd(item.properties.get("proj:bbox"), item.properties.get("proj:shape"))
+    epsg = item.properties.get("proj:epsg")
+    if gsd_native is None or not epsg:
+        return None
+    crs = QgsCoordinateReferenceSystem(f"EPSG:{epsg}")
+    if not crs.isValid():
+        return None
+    factor = QgsUnitTypes.fromUnitToUnitFactor(crs.mapUnits(), QgsUnitTypes.DistanceUnit.DistanceMeters)
+    return gsd_native * factor
 
 
 class ResultCard(QWidget):
@@ -258,13 +282,25 @@ class SearchTab(QWidget):
         # Point clouds have no VRT equivalent, so only the imagery/DEM tab gets a mosaic button.
         self.mosaic_button: Optional[QPushButton] = None
         if not lidar:
-            self.mosaic_button = WrapButton("Add as mosaic (VRT)...")
+            self.mosaic_button = WrapButton("Export Virtual Raster Tile (VRT)")
             self.mosaic_button.setToolTip(
                 "Stitch the selected tiles into one virtual raster, one per collection "
                 "(select two or more tiles)"
             )
             self.mosaic_button.setEnabled(False)
             self.mosaic_button.clicked.connect(self.add_mosaic)
+        # A portable index file (https://github.com/developmentseed/mosaicjson-spec) that titiler/
+        # rio-tiler/cogeo-mosaic can read directly -- pure metadata, no GDAL open and no server
+        # round-trip, unlike the VRT mosaic above. Same raster-only, one-per-collection grouping.
+        self.mosaicjson_button: Optional[QPushButton] = None
+        if not lidar:
+            self.mosaicjson_button = WrapButton("Export as MosaicJSON...")
+            self.mosaicjson_button.setToolTip(
+                "Save a MosaicJSON file for the selected tiles, one per collection, for use with "
+                "titiler/rio-tiler/cogeo-mosaic (select two or more tiles)"
+            )
+            self.mosaicjson_button.setEnabled(False)
+            self.mosaicjson_button.clicked.connect(self.export_mosaicjson)
         # Registers a search restricted to the selected tiles' ids and streams that as an XYZ
         # layer -- a precise crop instead of the whole-state streaming layer, with no download and
         # no local stitching. Same raster-only restriction as the VRT mosaic.
@@ -326,6 +362,8 @@ class SearchTab(QWidget):
             layout.addWidget(self.vpc_button)
         if self.mosaic_button is not None:
             layout.addWidget(self.mosaic_button)
+        if self.mosaicjson_button is not None:
+            layout.addWidget(self.mosaicjson_button)
         if self.server_mosaic_button is not None:
             layout.addWidget(self.server_mosaic_button)
         layout.addWidget(self.clip_to_aoi)
@@ -615,6 +653,8 @@ class SearchTab(QWidget):
             self.vpc_button.setEnabled(enabled)
         if self.mosaic_button is not None:
             self.mosaic_button.setEnabled(enabled)
+        if self.mosaicjson_button is not None:
+            self.mosaicjson_button.setEnabled(enabled)
         if self.server_mosaic_button is not None:
             self.server_mosaic_button.setEnabled(enabled)
 
@@ -754,7 +794,7 @@ class SearchTab(QWidget):
 
     def _on_mosaics_built(self, built: list, failed: list):
         self._mosaic_task = None
-        self.mosaic_button.setText("Add as mosaic (VRT)...")
+        self.mosaic_button.setText("Export Virtual Raster Tile (VRT)")
         if failed:
             first = f"{failed[0][0]}: {failed[0][1]}"
             self._warn(f"{len(failed)} mosaic{'s' if len(failed) != 1 else ''} failed (first: {first}).")
@@ -763,6 +803,50 @@ class SearchTab(QWidget):
             return
         specs = [LayerSpec(m.name, m.vrt_path, "gdal", m.bbox) for m in built]
         self._run_add(specs, list(self._pending_notes))
+
+    # ---- MosaicJSON export ------------------------------------------------------------------
+
+    def export_mosaicjson(self):
+        """Save a MosaicJSON file per collection among the selected tiles. Pure metadata (each
+        tile's own STAC properties), so unlike the VRT mosaic this needs no background task -- no
+        GDAL open, no network access."""
+        if self._busy():
+            return
+        items = self.selected_items()
+        if len(items) < 2:
+            self._info("Select two or more tiles to export a MosaicJSON.")
+            return
+        settings = QgsSettings()
+        folder = QFileDialog.getExistingDirectory(
+            self, "Save the MosaicJSON to", str(settings.value("kentucky_stac/mosaicjson_dir", "") or "")
+        )
+        if not folder:
+            return
+        settings.setValue("kentucky_stac/mosaicjson_dir", folder)
+
+        specs, left_out = plan_mosaicjson(items, folder, datetime.now().strftime("%H%M%S"))
+        if not specs:
+            self._info("A MosaicJSON needs two or more tiles from the same collection.")
+            return
+        written = 0
+        failed = []
+        for spec in specs:
+            try:
+                if write_mosaicjson(spec, _gsd_meters_for):
+                    written += 1
+                else:
+                    failed.append((spec.name, "no tile had a usable footprint"))
+            except Exception as e:
+                failed.append((spec.name, str(e)))
+
+        notes = [f"saved to {folder}"]
+        if left_out:
+            n = len(left_out)
+            notes.append(f"{n} tile{'s' if n != 1 else ''} left out (alone in {'their' if n != 1 else 'its'} collection)")
+        parts = [f"Exported {written} MosaicJSON file{'s' if written != 1 else ''}"] + notes
+        if failed:
+            parts.append(f"{len(failed)} failed (first: {failed[0][0]}: {failed[0][1]})")
+        (self._warn if failed else self._info)("; ".join(parts) + ".")
 
     # ---- server mosaic ----------------------------------------------------------------------
 
