@@ -1,7 +1,7 @@
 import os
 from dataclasses import replace
 from datetime import datetime
-from typing import Callable, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from qgis.core import Qgis, QgsApplication, QgsCoordinateReferenceSystem, QgsNetworkAccessManager, QgsProject, QgsSettings
 from qgis.PyQt.QtCore import QSize, Qt, QUrl, pyqtSignal
@@ -36,7 +36,9 @@ from .stac import Collection, Item, SearchQuery
 from .tasks import PAGE_SIZE, SearchTask
 from .vpc import build_vpc
 
-_COLUMNS = ["Tile", "Preview"]
+_COLUMNS = ["", "Tile", "Preview"]
+_CHECKBOX_COLUMN = 0
+_TILE_COLUMN = 1
 _THUMBNAIL_SIZE = 64
 CONFIRM_ABOVE = 25  # ask before adding more layers than this at once
 
@@ -117,7 +119,6 @@ class ResultCard(QWidget):
         size: str,
         projection: Optional[str] = None,
         point_count: Optional[str] = None,
-        on_toggled: Optional[Callable[[bool], None]] = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -126,17 +127,10 @@ class ResultCard(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(0)
-        title_row = QHBoxLayout()
-        title_row.setSpacing(4)
-        self.checkbox = QCheckBox()
-        if on_toggled is not None:
-            self.checkbox.toggled.connect(on_toggled)
-        title_row.addWidget(self.checkbox)
         title = QLabel(tile_id)
         title.setStyleSheet("font-weight: bold;")
         title.setWordWrap(True)
-        title_row.addWidget(title, 1)
-        layout.addLayout(title_row)
+        layout.addWidget(title)
         layout.addWidget(QLabel(collection))
         layout.addWidget(QLabel(date))
         # Hidden until set_size() gives it real text -- the catalog never carries a file size at
@@ -155,11 +149,6 @@ class ResultCard(QWidget):
     def set_size(self, text: str) -> None:
         self._size_label.setText(text)
         self._size_label.setVisible(bool(text))
-
-    def set_checked(self, checked: bool) -> None:
-        self.checkbox.blockSignals(True)
-        self.checkbox.setChecked(checked)
-        self.checkbox.blockSignals(False)
 
 
 def _describe(c: Collection) -> str:
@@ -508,8 +497,11 @@ class SearchTab(QWidget):
 
         for item in self._items:
             asset = primary_asset(item, self._lidar)
-            row = QTreeWidgetItem(["", ""])
+            row = QTreeWidgetItem(["", "", ""])
             self.tree.addTopLevelItem(row)
+            checkbox = QCheckBox()
+            checkbox.toggled.connect(lambda checked, row=row: row.setSelected(checked))
+            self.tree.setItemWidget(row, _CHECKBOX_COLUMN, checkbox)
             card = ResultCard(
                 item.id,
                 item.collection or "",
@@ -517,10 +509,10 @@ class SearchTab(QWidget):
                 format_size(asset.file_size) if asset else "",
                 projection=_projection_label(item),
                 point_count=_point_count_label(item),
-                on_toggled=lambda checked, row=row: row.setSelected(checked),
             )
-            self.tree.setItemWidget(row, 0, card)
-        self.tree.resizeColumnToContents(0)
+            self.tree.setItemWidget(row, _TILE_COLUMN, card)
+        self.tree.resizeColumnToContents(_TILE_COLUMN)
+        self.tree.setColumnWidth(_CHECKBOX_COLUMN, 24)
         # Grow the thumbnail to fill the same height as the stacked text card next to it, instead of
         # a small fixed square floating in a much taller row -- measured after layout since the
         # card's real height depends on which optional lines it ends up showing.
@@ -596,9 +588,11 @@ class SearchTab(QWidget):
         clicking a row, Ctrl-click, Select All/Clear Selection, or the checkbox itself."""
         for i in range(self.tree.topLevelItemCount()):
             row = self.tree.topLevelItem(i)
-            card = self.tree.itemWidget(row, 0)
-            if isinstance(card, ResultCard):
-                card.set_checked(row.isSelected())
+            checkbox = self.tree.itemWidget(row, _CHECKBOX_COLUMN)
+            if isinstance(checkbox, QCheckBox):
+                checkbox.blockSignals(True)
+                checkbox.setChecked(row.isSelected())
+                checkbox.blockSignals(False)
 
     def _busy(self) -> bool:
         return any(
@@ -1004,10 +998,10 @@ class SearchTab(QWidget):
             asset = primary_asset(item, self._lidar)
             size = sizes.get(asset.href) if asset else None
             if size:
-                card = self.tree.itemWidget(self.tree.topLevelItem(row), 0)
+                card = self.tree.itemWidget(self.tree.topLevelItem(row), _TILE_COLUMN)
                 if isinstance(card, ResultCard):
                     card.set_size(format_size(size))
-        self.tree.resizeColumnToContents(0)
+        self.tree.resizeColumnToContents(_TILE_COLUMN)
 
     def selected_items(self) -> List[Item]:
         """The tiles currently selected in the results list."""
