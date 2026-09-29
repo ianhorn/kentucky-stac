@@ -37,7 +37,7 @@ from .stac import Collection, Item, SearchQuery
 from .tasks import PAGE_SIZE, SearchTask
 from .vpc import build_vpc
 
-_COLUMNS = ["Tile", "Collection", "Date", "Size", "Preview"]
+_COLUMNS = ["Tile", "Preview"]
 _THUMBNAIL_SIZE = 64
 CONFIRM_ABOVE = 25  # ask before adding more layers than this at once
 
@@ -63,6 +63,31 @@ class WrapButton(QPushButton):
 
     def text(self) -> str:
         return self._label.text()
+
+
+class ResultCard(QWidget):
+    """One result row's tile id/collection/date/size, stacked vertically instead of spread across
+    separate tree columns -- a narrow dock would otherwise need horizontal scrolling to read them
+    (reported live via a screenshot). A transparent background lets the tree's own selection
+    highlight/alternating row color show through, same as a plain-text row would."""
+
+    def __init__(self, tile_id: str, collection: str, date: str, size: str, parent=None):
+        super().__init__(parent)
+        self.setAutoFillBackground(False)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(0)
+        title = QLabel(tile_id)
+        title.setStyleSheet("font-weight: bold;")
+        layout.addWidget(title)
+        layout.addWidget(QLabel(collection))
+        layout.addWidget(QLabel(date))
+        self._size_label = QLabel(size)
+        layout.addWidget(self._size_label)
+
+    def set_size(self, text: str) -> None:
+        self._size_label.setText(text)
 
 
 def _describe(c: Collection) -> str:
@@ -452,12 +477,13 @@ class SearchTab(QWidget):
 
         for item in self._items:
             asset = primary_asset(item, self._lidar)
-            row = QTreeWidgetItem(
-                [item.id, item.collection or "", (item.datetime or "")[:10], format_size(asset.file_size) if asset else "", ""]
-            )
+            row = QTreeWidgetItem(["", ""])
             self.tree.addTopLevelItem(row)
-        for column in range(len(_COLUMNS) - 1):
-            self.tree.resizeColumnToContents(column)
+            card = ResultCard(
+                item.id, item.collection or "", (item.datetime or "")[:10], format_size(asset.file_size) if asset else ""
+            )
+            self.tree.setItemWidget(row, 0, card)
+        self.tree.resizeColumnToContents(0)
         self.tree.setColumnWidth(len(_COLUMNS) - 1, _THUMBNAIL_SIZE + 8)
         self._fetch_thumbnails()
 
@@ -922,8 +948,10 @@ class SearchTab(QWidget):
             asset = primary_asset(item, self._lidar)
             size = sizes.get(asset.href) if asset else None
             if size:
-                self.tree.topLevelItem(row).setText(3, format_size(size))
-        self.tree.resizeColumnToContents(3)
+                card = self.tree.itemWidget(self.tree.topLevelItem(row), 0)
+                if isinstance(card, ResultCard):
+                    card.set_size(format_size(size))
+        self.tree.resizeColumnToContents(0)
 
     def selected_items(self) -> List[Item]:
         """The tiles currently selected in the results list."""
