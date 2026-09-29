@@ -3,7 +3,7 @@ from dataclasses import replace
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from qgis.core import Qgis, QgsApplication, QgsNetworkAccessManager, QgsProject, QgsSettings
+from qgis.core import Qgis, QgsApplication, QgsCoordinateReferenceSystem, QgsNetworkAccessManager, QgsProject, QgsSettings
 from qgis.PyQt.QtCore import QSize, Qt, QUrl, pyqtSignal
 from qgis.PyQt.QtGui import QIcon, QImage, QPixmap
 from qgis.PyQt.QtNetwork import QNetworkReply, QNetworkRequest
@@ -65,13 +65,44 @@ class WrapButton(QPushButton):
         return self._label.text()
 
 
-class ResultCard(QWidget):
-    """One result row's tile id/collection/date/size, stacked vertically instead of spread across
-    separate tree columns -- a narrow dock would otherwise need horizontal scrolling to read them
-    (reported live via a screenshot). A transparent background lets the tree's own selection
-    highlight/alternating row color show through, same as a plain-text row would."""
+def _projection_label(item: Item) -> Optional[str]:
+    """A short CRS label from the item's own STAC properties. Imagery/DEM items carry a plain
+    `proj:epsg`; LiDAR items don't (their compound horizontal+vertical CRS has no single EPSG code
+    to name -- confirmed live, every laz-phaseN item's properties have `proj:wkt2` only), so those
+    fall back to resolving the WKT and using QGIS's own name for it."""
+    epsg = item.properties.get("proj:epsg")
+    if epsg:
+        return f"EPSG:{epsg}"
+    wkt = item.properties.get("proj:wkt2")
+    if wkt:
+        crs = QgsCoordinateReferenceSystem.fromWkt(wkt)
+        if crs.isValid():
+            return crs.authid() or crs.description()
+    return None
 
-    def __init__(self, tile_id: str, collection: str, date: str, size: str, parent=None):
+
+def _point_count_label(item: Item) -> Optional[str]:
+    count = item.properties.get("pc:count")
+    return f"{int(count):,} points" if count else None
+
+
+class ResultCard(QWidget):
+    """One result row's tile id/collection/date/size (plus projection and, for point clouds, point
+    count), stacked vertically instead of spread across separate tree columns -- a narrow dock would
+    otherwise need horizontal scrolling to read them (reported live via a screenshot). A transparent
+    background lets the tree's own selection highlight/alternating row color show through, same as a
+    plain-text row would."""
+
+    def __init__(
+        self,
+        tile_id: str,
+        collection: str,
+        date: str,
+        size: str,
+        projection: Optional[str] = None,
+        point_count: Optional[str] = None,
+        parent=None,
+    ):
         super().__init__(parent)
         self.setAutoFillBackground(False)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -80,11 +111,18 @@ class ResultCard(QWidget):
         layout.setSpacing(0)
         title = QLabel(tile_id)
         title.setStyleSheet("font-weight: bold;")
+        title.setWordWrap(True)
         layout.addWidget(title)
         layout.addWidget(QLabel(collection))
         layout.addWidget(QLabel(date))
         self._size_label = QLabel(size)
         layout.addWidget(self._size_label)
+        if projection:
+            proj_label = QLabel(projection)
+            proj_label.setWordWrap(True)
+            layout.addWidget(proj_label)
+        if point_count:
+            layout.addWidget(QLabel(point_count))
 
     def set_size(self, text: str) -> None:
         self._size_label.setText(text)
@@ -480,7 +518,12 @@ class SearchTab(QWidget):
             row = QTreeWidgetItem(["", ""])
             self.tree.addTopLevelItem(row)
             card = ResultCard(
-                item.id, item.collection or "", (item.datetime or "")[:10], format_size(asset.file_size) if asset else ""
+                item.id,
+                item.collection or "",
+                (item.datetime or "")[:10],
+                format_size(asset.file_size) if asset else "",
+                projection=_projection_label(item),
+                point_count=_point_count_label(item),
             )
             self.tree.setItemWidget(row, 0, card)
         self.tree.resizeColumnToContents(0)
