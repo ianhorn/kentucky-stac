@@ -267,7 +267,7 @@ class SearchTab(QWidget):
         # (see layer_specs); plain LAZ/LAS is skipped, same restriction as "Add selected to map".
         self.vpc_button: Optional[QPushButton] = None
         if lidar:
-            self.vpc_button = WrapButton("Add selected as VPC")
+            self.vpc_button = WrapButton("Add selected as Virtual Point Cloud")
             self.vpc_button.setToolTip(
                 "Combine the selected tiles into one virtual point cloud layer, streamed directly "
                 "with no download (select two or more COPC tiles)"
