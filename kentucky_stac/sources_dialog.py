@@ -14,7 +14,6 @@ from qgis.PyQt.QtWidgets import (
     QDialogButtonBox,
     QFormLayout,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -25,6 +24,7 @@ from qgis.PyQt.QtWidgets import (
 
 from .sources import (
     BUILTIN_ENTRY,
+    ORIGINAL_TITILER_URL,
     ApiSource,
     CatalogEntry,
     add_source,
@@ -39,6 +39,64 @@ _WARNING = (
     "or downloads from them may behave differently or fail. The server mosaic only works for another "
     "API if you give it a titiler / titiler-pgstac server that serves that API's catalog."
 )
+
+
+class TilerUrlDialog(QDialog):
+    """Ask for the titiler / titiler-pgstac server behind "Add as server mosaic" for one source."""
+
+    def __init__(self, source_name: str, current: str = "", parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Tile server")
+        self.setMinimumWidth(480)
+        warning = QLabel(
+            "<b>Experimental.</b> The built-in server mosaic only covers KyFromAbove. For "
+            f"{source_name}, enter the base URL of a titiler / titiler-pgstac server that serves this "
+            "API's catalog. Servers differ, so this may not work with every one."
+        )
+        warning.setWordWrap(True)
+        warning.setStyleSheet(
+            "QLabel { background: #fff4d6; color: #5c4400; border: 1px solid #e8cf8a; "
+            "border-radius: 4px; padding: 6px; }"
+        )
+        self.url_edit = QLineEdit(current or "https://")
+        self.url_edit.selectAll()
+        self.original_button = QPushButton("Use KyFromAbove's titiler")
+        self.original_button.setToolTip(f"Revert to the original: {ORIGINAL_TITILER_URL}")
+        self.original_button.clicked.connect(lambda: self.url_edit.setText(ORIGINAL_TITILER_URL))
+        self.error_label = QLabel()
+        self.error_label.setStyleSheet("color: #c0392b;")
+        self.error_label.setVisible(False)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self._accept)
+        buttons.rejected.connect(self.reject)
+        row = QHBoxLayout()
+        row.addWidget(self.original_button)
+        row.addStretch(1)
+        row.addWidget(buttons)
+        layout = QVBoxLayout(self)
+        layout.addWidget(warning)
+        layout.addWidget(QLabel("Tile server base URL (blank to clear)"))
+        layout.addWidget(self.url_edit)
+        layout.addWidget(self.error_label)
+        layout.addLayout(row)
+
+    def _accept(self):
+        url = self.url()
+        if url and not is_valid_api_url(url):
+            self.error_label.setText("Enter a valid http(s):// URL.")
+            self.error_label.setVisible(True)
+            return
+        self.accept()
+
+    def url(self) -> str:
+        url = normalize_url(self.url_edit.text())
+        return "" if url in ("https:", "http:") else url
+
+    @staticmethod
+    def ask(source_name: str, current: str = "", parent=None):
+        """The entered URL ("" = clear it), or None if the user cancelled."""
+        dialog = TilerUrlDialog(source_name, current, parent)
+        return dialog.url() if dialog.exec() == QDialog.DialogCode.Accepted else None
 
 
 class SourcesDialog(QDialog):
@@ -64,7 +122,7 @@ class SourcesDialog(QDialog):
         self.remove_button.clicked.connect(self._remove_selected)
         self.tiler_button = QPushButton("Tile server...")
         self.tiler_button.setToolTip(
-            "Set the titiler / titiler-pgstac server used for \"Add as server mosaic\" with the selected source's tiles"
+            "Experimental: set the titiler / titiler-pgstac server used for \"Add as server mosaic\" with the selected source's tiles"
         )
         self.tiler_button.clicked.connect(self._edit_tiler)
         side_buttons = QVBoxLayout()
@@ -161,20 +219,9 @@ class SourcesDialog(QDialog):
         if not (0 <= row < len(self._sources)) or self._sources[row].is_default:
             return
         source = self._sources[row]
-        text, ok = QInputDialog.getText(
-            self,
-            "Tile server",
-            f"Base URL of a titiler / titiler-pgstac server that serves {source.name}'s catalog (blank to clear):",
-            text=source.tiler_url,
-        )
-        url = normalize_url(text)
-        if not ok:
+        url = TilerUrlDialog.ask(source.name, source.tiler_url, self)
+        if url is None:
             return
-        if url and not is_valid_api_url(url):
-            self.error_label.setText("Enter a valid http(s):// URL for the tile server.")
-            self.error_label.setVisible(True)
-            return
-        self.error_label.setVisible(False)
         self._sources = with_tiler_url(self._sources, source.base_uri, url)
         self._refresh_list()
         self.source_list.setCurrentRow(row)

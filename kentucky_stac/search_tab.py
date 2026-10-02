@@ -20,7 +20,6 @@ from qgis.PyQt.QtWidgets import (
     QCheckBox,
     QFileDialog,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QListWidget,
     QListWidgetItem,
@@ -51,7 +50,8 @@ from .mosaicjson import native_gsd, plan_mosaicjson, write_mosaicjson
 from .pdal_clip import CropPointCloudsTask, clipped_path
 from .results_layer import select_results, show_results
 from .server_layers import RegisterMosaicsTask, add_search_layer, plan_server_mosaics, tiler_url
-from .sources import DEFAULT_SOURCE, ApiSource, is_default_uri, is_valid_api_url, normalize_url, source_name, tiler_for, with_tiler_url
+from .sources import DEFAULT_SOURCE, ApiSource, is_default_uri, source_name, tiler_for, with_tiler_url
+from .sources_dialog import TilerUrlDialog
 from .stac import Collection, Item, SearchQuery
 from .tasks import PAGE_SIZE, SearchTask
 from .vpc import build_vpc
@@ -442,19 +442,8 @@ class SearchTab(QWidget):
     def _ask_tiler_url(self, base_uri: str) -> bool:
         """Ask for the titiler-pgstac server to use for a source's server mosaic, and remember it.
         Returns False if the user cancelled or left it blank."""
-        name = source_name(self._sources, base_uri)
-        text, ok = QInputDialog.getText(
-            self,
-            "Tile server",
-            f"The built-in server mosaic only covers KyFromAbove. To make one from {name}, enter the base URL "
-            "of a titiler / titiler-pgstac server that serves this API's catalog:",
-            text="https://",
-        )
-        url = normalize_url(text)
-        if not ok or url in ("", "https:", "http:"):
-            return False
-        if not is_valid_api_url(url):
-            self._warn("That isn't a valid http(s):// URL.")
+        url = TilerUrlDialog.ask(source_name(self._sources, base_uri), "", self)
+        if not url:
             return False
         self._sources = with_tiler_url(self._sources, base_uri, url)
         self.sources_changed.emit(list(self._sources))

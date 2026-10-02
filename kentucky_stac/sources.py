@@ -16,6 +16,8 @@ from typing import Any, Iterable, List, Optional
 from .stac import DEFAULT_BASE_URI
 
 STAC_INDEX_URL = "https://stacindex.org/api/catalogs"
+# KyFromAbove's own titiler -- the "revert to the original" choice in the tile server dialog.
+ORIGINAL_TITILER_URL = "https://6hp4guqpwe.execute-api.us-west-2.amazonaws.com/"
 BUILTIN_NAME = "KyFromAbove"
 _SUMMARY_MAX = 240
 
