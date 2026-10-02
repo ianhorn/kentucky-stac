@@ -4,7 +4,8 @@ QGIS plugin for searching, loading and downloading [Kentucky From Above](https:/
 imagery, elevation and LiDAR (COPC) through its STAC API. Successor to the ArcGIS Pro add-ins
 `kyfromabove-stac-addin` and `kylidar-addin`.
 
-Status: early scaffold.
+Full documentation: [`docs/index.html`](docs/index.html) (published via GitHub Pages once enabled on
+this repo).
 
 ## Development
 
