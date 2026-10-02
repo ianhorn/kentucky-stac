@@ -228,3 +228,9 @@ def test_asset_flags():
     assert Asset(href="A.COPC.LAZ").is_copc and Asset(href="A.COPC.LAZ").is_lidar
     assert Asset(href="a.las").is_lidar and not Asset(href="a.las").is_copc
     assert not Asset(href="a.tif").is_lidar
+
+
+def test_asset_band_count_from_eo_or_raster_bands():
+    assert Asset.from_dict({"href": "a.tif", "eo:bands": [{}, {}, {}, {}]}).band_count == 4
+    assert Asset.from_dict({"href": "a.tif", "raster:bands": [{}, {}, {}]}).band_count == 3
+    assert Asset.from_dict({"href": "a.tif"}).band_count == 0

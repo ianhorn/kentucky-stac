@@ -49,7 +49,7 @@ from .mosaic import BuildMosaicsTask, plan_mosaics
 from .mosaicjson import native_gsd, plan_mosaicjson, write_mosaicjson
 from .pdal_clip import CropPointCloudsTask, clipped_path
 from .results_layer import select_results, show_results
-from .server_layers import RegisterMosaicsTask, add_search_layer, plan_server_mosaics, tiler_url
+from .server_layers import RegisterMosaicsTask, add_cog_layers, add_search_layer, plan_server_mosaics, tiler_url
 from .sources import DEFAULT_SOURCE, ApiSource, is_default_uri, source_name, tiler_for, with_tiler_url
 from .sources_dialog import TilerUrlDialog
 from .stac import Collection, Item, SearchQuery
@@ -962,8 +962,13 @@ class SearchTab(QWidget):
     def _on_server_mosaics_registered(self, built: list, failed: list):
         self._register_task = None
         self.server_mosaic_button.setText("Add as server mosaic")
-        added, extra_notes = 0, []
-        for group, search_id, style in built:
+        added, tile_layers, extra_notes = 0, 0, []
+        for group, search_id, style, kind in built:
+            if kind == "cog":  # a plain titiler: one layer per tile
+                count, notes = add_cog_layers(group)
+                tile_layers += count
+                extra_notes.extend(notes)
+                continue
             layer, message = add_search_layer(search_id, group, style)
             if layer is not None:
                 added += 1
@@ -971,6 +976,8 @@ class SearchTab(QWidget):
                 extra_notes.append(message)
 
         parts = [f"Added {added} server mosaic{'s' if added != 1 else ''}"]
+        if tile_layers:
+            parts.append(f"{tile_layers} tile layer{'s' if tile_layers != 1 else ''} from a titiler server")
         if self._server_mosaic_note:
             parts.append(self._server_mosaic_note)
         if failed:

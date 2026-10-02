@@ -1,4 +1,11 @@
-"""Streaming layers from a titiler-pgstac server, restricted to a chosen set of tiles.
+"""Streaming layers from a tile server, restricted to a chosen set of tiles.
+
+Two kinds of server are supported:
+
+* titiler-pgstac (KyFromAbove's own, or a user's that serves another API's catalog): one mosaic layer
+  per collection, described next.
+* plain titiler (a user's own, for a source with no pgstac server): one layer per tile, each reading
+  that tile's own file through `/cog/tiles/...?url=<file>`. See plain_tile_url / add_cog_layers.
 
 A mosaic of specific tiles registers a search scoped to their ids (POST /searches/register,
 idempotent -- the same ids/collection hash to the same search and reuse the existing one) and reads
@@ -17,11 +24,13 @@ from qgis.core import QgsProject, QgsRasterLayer, QgsSettings, QgsTask
 
 from .qgis_transport import qgis_transport
 from .sources import is_default_uri
-from .stac import Item
+from .stac import Item, StacError
 
 DEFAULT_TILER_URL = "https://vdo05uew72.execute-api.us-west-2.amazonaws.com"
 SETTINGS_KEY = "kentucky_stac/tiler_url"
 GROUP_NAME = "Ky STAC"
+# A plain titiler gets one layer per tile, so cap how many a single click adds.
+MAX_TILE_LAYERS = 50
 USER_AGENT = "KentuckyStac/0.1"
 
 # Elevation colors stretch across roughly the range of Kentucky terrain, in feet.
@@ -63,10 +72,26 @@ def default_style_for(collection_id: str) -> Optional[Style]:
     return styles[0] if styles else None
 
 
-def generic_style(asset: str) -> Style:
+def generic_style(asset: str, bands: int = 0) -> Style:
     """For a collection on someone else's tile server, whose layout is unknown: render the tile's
-    own data asset as-is, with no band selection or color ramp (those are KyFromAbove specifics)."""
-    return Style("color", "Color", f"assets={urllib.parse.quote(asset, safe='')}")
+    own data asset as-is, with no color ramp (that's a KyFromAbove specific). A 4+ band image (RGB
+    plus near-infrared or an undefined band) can't be encoded as PNG, so then bands 1-3 are asked for."""
+    quoted = urllib.parse.quote(asset, safe="")
+    query = f"assets={quoted}"
+    if bands >= 4:
+        query += f"&asset_bidx={quoted}%7C1%2C2%2C3"
+    return Style("color", "Color", query)
+
+
+def plain_tile_url(base: str, href: str, fmt: str = "png", bands: int = 0) -> str:
+    """XYZ template for a plain titiler reading one tile's file. The file URL is fully percent-encoded
+    so its own "?" is not mistaken for part of this URL. "=" stays raw, since QGIS's XYZ source decodes
+    "%3D" back to it anyway (harmless inside a query value). A "&" can't be carried at all -- QGIS decodes
+    "%26" back to a raw "&", which would split the query -- so add_cog_layers skips such files."""
+    encoded = urllib.parse.quote(href, safe="=")
+    url = f"{base.rstrip('/')}/cog/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}.{fmt}?url={encoded}"
+    # 4+ bands (RGB plus near-infrared or an undefined band) can't be encoded as PNG: ask for 1-3.
+    return url + "&bidx=1&bidx=2&bidx=3" if bands >= 4 else url
 
 
 def search_tile_url(base: str, search_id: str, style: Style, fmt: str = "png") -> str:
@@ -119,6 +144,8 @@ class MosaicGroup:
     tiler: str = ""  # the titiler-pgstac base URL this group is registered with
     source_name: str = ""  # "" for the built-in catalog
     asset: str = ""  # the data asset to render, for a source other than the built-in one ("" = built-in)
+    hrefs: Tuple[str, ...] = ()  # each tile's data file URL, parallel to ids (used by a plain titiler)
+    band_counts: Tuple[int, ...] = ()  # each tile's band count (0 = unknown), parallel to ids
 
 
 def plan_server_mosaics(
@@ -142,10 +169,62 @@ def plan_server_mosaics(
             continue
         if source:  # another API's tile server: render whichever asset its tiles' data lives in
             asset = next((k for k in (m.data_asset_key() for m in members) if k), "data")
-            planned.append(MosaicGroup(cid, tuple(m.id for m in members), tiler.rstrip("/"), name_for_source(source), asset))
+            hrefs = tuple((m.data_asset().href if m.data_asset() else "") for m in members)
+            counts = tuple((m.data_asset().band_count if m.data_asset() else 0) for m in members)
+            planned.append(
+                MosaicGroup(
+                    cid, tuple(m.id for m in members), tiler.rstrip("/"), name_for_source(source), asset, hrefs, counts
+                )
+            )
         else:
             planned.append(MosaicGroup(cid, tuple(m.id for m in members), tiler.rstrip("/")))
     return planned
+
+
+def detect_server_kind(base: str) -> str:
+    """"pgstac" (has /searches/...), "cog" (a plain titiler, has /cog/...), or "" if it can't tell --
+    read from the server's OpenAPI document, which FastAPI apps (both titilers) publish."""
+    try:
+        raw = qgis_transport(
+            "GET", f"{base.rstrip('/')}/openapi.json", None, {"Accept": "application/json", "User-Agent": USER_AGENT}
+        )
+        paths = list((json.loads(raw).get("paths") or {}).keys())
+    except Exception:
+        return ""
+    if any("/searches/" in p for p in paths):
+        return "pgstac"
+    if any(p.startswith("/cog/") for p in paths):
+        return "cog"
+    return ""
+
+
+def add_cog_layers(group: MosaicGroup, project: Optional[QgsProject] = None) -> Tuple[int, List[str]]:
+    """Add one XYZ layer per tile for a plain titiler. Returns (layers added, notes)."""
+    notes: List[str] = []
+    counts = group.band_counts or (0,) * len(group.ids)
+    pairs = [(i, h, b) for i, h, b in zip(group.ids, group.hrefs, counts) if h and "&" not in h]
+    if len(pairs) < len(group.ids):
+        notes.append(
+            f"{len(group.ids) - len(pairs)} tile(s) skipped (no data file URL, or one containing \"&\", "
+            "which can't be passed to a tile layer)"
+        )
+    if len(pairs) > MAX_TILE_LAYERS:
+        notes.append(
+            f"only the first {MAX_TILE_LAYERS} of {len(pairs)} tiles were added as layers "
+            "(Export VRT or Export as MosaicJSON handle many tiles better)"
+        )
+        pairs = pairs[:MAX_TILE_LAYERS]
+    added = 0
+    for item_id, href, bands in pairs:
+        where = f"{item_id} · {group.source_name}" if group.source_name else item_id
+        layer, message = add_xyz_layer(
+            plain_tile_url(group.tiler, href, bands=bands), f"Ky STAC {where} (titiler)", project
+        )
+        if layer is not None:
+            added += 1
+        elif "already" not in message:
+            notes.append(message)
+    return added, notes
 
 
 def register_search(base: str, collection_id: str, ids: Iterable[str]) -> dict:
@@ -163,7 +242,7 @@ def register_search(base: str, collection_id: str, ids: Iterable[str]) -> dict:
 
 class RegisterMosaicsTask(QgsTask):
     """Register one search per collection group. `callback(built, failed)` runs on the main thread
-    unless cancelled: `built` is a list of (MosaicGroup, search_id, Style), `failed` a list of
+    unless cancelled: `built` is a list of (MosaicGroup, search_id or None, Style, kind), `failed` a list of
     (collection_id, error)."""
 
     def __init__(self, groups: List[MosaicGroup], callback: Callable[[list, list], None]):
@@ -177,13 +256,25 @@ class RegisterMosaicsTask(QgsTask):
         for group in self._groups:
             if self.isCanceled():
                 return False
-            style = generic_style(group.asset) if group.asset else default_style_for(group.collection_id)
+            bands = next((b for b in group.band_counts if b), 0)
+            style = generic_style(group.asset, bands) if group.asset else default_style_for(group.collection_id)
             if style is None:
                 self.failed.append((group.collection_id, "this collection has no renderable style"))
                 continue
+            # The built-in server is always titiler-pgstac; a user's could be either kind.
+            kind = detect_server_kind(group.tiler) if group.asset else "pgstac"
             try:
+                if kind == "cog":
+                    self.built.append((group, None, style, "cog"))
+                    continue
                 result = register_search(group.tiler, group.collection_id, group.ids)
-                self.built.append((group, result["id"], style))
+                self.built.append((group, result["id"], style, "pgstac"))
+            except StacError as e:
+                if group.asset and kind == "" and e.status in (404, 405):
+                    # No /searches/register: not a pgstac server, so treat it as a plain titiler.
+                    self.built.append((group, None, style, "cog"))
+                else:
+                    self.failed.append((group.collection_id, str(e)))
             except Exception as e:
                 self.failed.append((group.collection_id, str(e)))
         return True

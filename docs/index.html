@@ -319,11 +319,20 @@
     </ul>
     <p>Other APIs implement STAC differently, so thumbnails, adding to the map, or downloads may not work for
       every one. Assets on <code>s3://</code> URLs (e.g. NAIP on Earth Search, which is requester-pays) can't be
-      read without AWS credentials. The built-in <strong>server mosaic</strong> only covers KyFromAbove tiles. To make one from another source,
-      give it a <a href="https://github.com/stac-utils/titiler-pgstac" target="_blank" rel="noopener">titiler-pgstac</a>
-      server that serves that API&rsquo;s catalog: click <strong>Add as server mosaic</strong> and QGIS asks for the server URL
-      (remembered per source), or set it under <strong>Sources... &rarr; Tile server...</strong>. This is <strong>experimental</strong>. The dialog's <strong>Use KyFromAbove's titiler</strong> button fills in KyFromAbove's own titiler URL (<code>https://6hp4guqpwe.execute-api.us-west-2.amazonaws.com</code>) to revert to the original. It must be a titiler-pgstac
-      instance connected to the same catalog as the API; a plain titiler can&rsquo;t register a search over specific tiles.</p>
+      read without AWS credentials. The built-in <strong>server mosaic</strong> only covers KyFromAbove tiles. To make one from another
+      source, <strong>bring your own titiler</strong>: click <strong>Add as server mosaic</strong> and QGIS asks for the server
+      URL (remembered per source), or set it under <strong>Sources... &rarr; Tile server...</strong>. This is <strong>experimental</strong>.
+      Two kinds of server work, and the plugin works out which yours is:</p>
+    <ul>
+      <li><a href="https://github.com/stac-utils/titiler-pgstac" target="_blank" rel="noopener">titiler-pgstac</a> connected
+        to that API&rsquo;s catalog &mdash; one mosaic layer per collection.</li>
+      <li>A plain <a href="https://developmentseed.org/titiler/" target="_blank" rel="noopener">titiler</a> &mdash; one layer
+        per tile (up to 50 at a time), each reading the tile&rsquo;s own file. No catalog connection needed.</li>
+    </ul>
+    <p>The server must be able to read the files: public https is fine; <code>s3://</code> files need the server to have its own
+      AWS access. The dialog&rsquo;s <strong>i</strong> button explains this, and <strong>Use KyFromAbove&rsquo;s titiler</strong>
+      fills in KyFromAbove&rsquo;s own titiler URL (<code>https://6hp4guqpwe.execute-api.us-west-2.amazonaws.com</code>) to
+      revert to the original, which only holds KyFromAbove data.</p>
   </section>
 
   <section id="results">

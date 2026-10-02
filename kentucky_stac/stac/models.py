@@ -40,6 +40,7 @@ class Asset:
     title: Optional[str] = None
     roles: List[str] = field(default_factory=list)
     file_size: Optional[int] = None
+    band_count: int = 0  # from eo:bands / raster:bands; 0 = not stated
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "Asset":
@@ -49,6 +50,7 @@ class Asset:
             title=d.get("title"),
             roles=list(d.get("roles") or []),
             file_size=d.get("file:size"),
+            band_count=max(len(d.get("eo:bands") or []), len(d.get("raster:bands") or [])),
         )
 
     @property
