@@ -74,6 +74,8 @@ class Item:
     # Base URL of the STAC API this item came from -- set by the caller after a search, not part
     # of the STAC document. "" means unknown (treated as the built-in catalog).
     source: str = ""
+    # The item exactly as the server sent it, for showing its JSON (not compared or printed).
+    raw: Dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "Item":
@@ -85,6 +87,7 @@ class Item:
             properties=dict(d.get("properties") or {}),
             assets={k: Asset.from_dict(v) for k, v in (d.get("assets") or {}).items() if v},
             links=[Link.from_dict(x) for x in d.get("links") or []],
+            raw=d,
         )
 
     @property

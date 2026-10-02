@@ -133,3 +133,16 @@ def test_add_source_with_tiler_and_with_tiler_url():
 def test_data_asset_key():
     it = Item.from_dict({"id": "x", "assets": {"thumbnail": {"href": "t.png"}, "visual": {"href": "v.tif"}}})
     assert it.data_asset_key() == "visual" and Item().data_asset_key() is None
+
+
+def test_item_json_text_and_html():
+    from kentucky_stac.item_json import item_json_text, json_to_html
+
+    raw = {"id": "t1", "properties": {"note": "a <b> & c"}, "assets": {"data": {"href": "https://x.example/a.tif?sig=1&b=2"}}}
+    item = Item.from_dict(raw)
+    assert '"id": "t1"' in item_json_text(item) and item_json_text(item).startswith("{\n  ")
+    page = json_to_html(item_json_text(item))
+    assert "a &lt;b&gt; &amp; c" in page  # escaped
+    assert '<a href="https://x.example/a.tif?sig=1&amp;b=2">https://x.example/a.tif?sig=1&amp;b=2</a>' in page
+    # An Item built by hand (no raw document) still renders from its fields.
+    assert '"id": "h"' in item_json_text(Item(id="h"))

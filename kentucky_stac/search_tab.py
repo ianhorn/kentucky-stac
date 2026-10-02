@@ -44,6 +44,8 @@ from .downloads import (
     default_concurrency,
     plan_downloads,
 )
+from .item_json import item_json_text, json_to_html
+from .json_card import ItemJsonHover
 from .layers import AddLayersTask, LayerSpec, already_on_map, item_bbox, layer_specs, local_specs, union_bbox
 from .mosaic import BuildMosaicsTask, plan_mosaics
 from .mosaicjson import native_gsd, plan_mosaicjson, write_mosaicjson
@@ -270,6 +272,8 @@ class SearchTab(QWidget):
         self.tree.setIconSize(QSize(self._icon_size, self._icon_size))
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.tree.itemSelectionChanged.connect(self._on_selection_changed)
+        # Resting the mouse on a row opens a card with that tile's raw STAC JSON.
+        self._json_hover = ItemJsonHover(self.tree, self._json_html_for_row, self)
         self._thumb_replies: List[QNetworkReply] = []
 
         self.add_button = WrapButton("Add selected to map")
@@ -608,13 +612,14 @@ class SearchTab(QWidget):
             self._fids = [None] * len(self._items)
             self._warn(f"Found tiles, but could not draw them on the map: {e}")
 
-        for item in self._items:
+        for index, item in enumerate(self._items):
             asset = primary_asset(item, self._lidar)
             row = QTreeWidgetItem(["", "", ""])
             self.tree.addTopLevelItem(row)
             checkbox = QCheckBox()
             checkbox.toggled.connect(lambda checked, row=row: row.setSelected(checked))
             self.tree.setItemWidget(row, _CHECKBOX_COLUMN, checkbox)
+            self._json_hover.watch(checkbox, index)
             source = self._source_label(item.source)
             card = ResultCard(
                 item.id,
@@ -625,6 +630,7 @@ class SearchTab(QWidget):
                 point_count=_point_count_label(item),
             )
             self.tree.setItemWidget(row, _TILE_COLUMN, card)
+            self._json_hover.watch(card, index)
         self.tree.resizeColumnToContents(_TILE_COLUMN)
         self.tree.setColumnWidth(_CHECKBOX_COLUMN, 24)
         # Grow the thumbnail to fill the same height as the stacked text card next to it, instead of
@@ -644,7 +650,11 @@ class SearchTab(QWidget):
         self._set_results_message(text)
         self._update_search_enabled()
 
+    def _json_html_for_row(self, row: int) -> Optional[str]:
+        return json_to_html(item_json_text(self._items[row])) if 0 <= row < len(self._items) else None
+
     def _clear_results(self):
+        self._json_hover.reset()
         self._cancel_thumbnail_fetches()
         self._items = []
         self._fids = []
@@ -1206,6 +1216,7 @@ class SearchTab(QWidget):
             self._bar.pushMessage("Kentucky STAC", text, level=Qgis.MessageLevel.Info, duration=8)
 
     def shutdown(self):
+        self._json_hover.reset()
         self._cancel_thumbnail_fetches()
         for attr in ("_task", "_add_task", "_size_task", "_mosaic_task", "_register_task", "_clip_task"):
             task = getattr(self, attr)
