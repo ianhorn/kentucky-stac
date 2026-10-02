@@ -45,6 +45,7 @@ from .downloads import (
     plan_downloads,
 )
 from . import s3
+from .filters_panel import FiltersPanel
 from .item_json import item_json_text, json_to_html
 from .json_card import ItemJsonHover
 from .layers import AddLayersTask, LayerSpec, already_on_map, item_bbox, layer_specs, local_specs, union_bbox
@@ -229,6 +230,7 @@ class SearchTab(QWidget):
         self._fids: List[Optional[int]] = []
         self._has_collections = False
         self._results_message: Optional[str] = None
+        self._sort: Optional[str] = None  # the sort the current results were fetched with
 
         # A checklist rather than a single-select dropdown, so a search can span any combination of
         # collections (e.g. two DEM phases together) -- styled after QGIS's own "Build Virtual
@@ -251,6 +253,7 @@ class SearchTab(QWidget):
         self.status = QLabel()
         self.status.setWordWrap(True)
 
+        self.filters = FiltersPanel(lidar)
         self.search_button = WrapButton("Search area of interest")
         self.search_button.clicked.connect(self.search)
 
@@ -386,6 +389,7 @@ class SearchTab(QWidget):
         layout.addWidget(QLabel("Collections"))
         layout.addLayout(row)
         layout.addWidget(self.status)
+        layout.addWidget(self.filters)
         layout.addWidget(self.search_button)
         layout.addWidget(self.results_status)
         results_selection_row = QHBoxLayout()
@@ -574,6 +578,10 @@ class SearchTab(QWidget):
             return
         if not collections or intersects is None:
             return
+        problem = self.filters.error()
+        if problem:
+            self._warn(problem)
+            return
 
         # One search per source, each restricted to that source's checked collections.
         groups: Dict[str, List[str]] = {}
@@ -583,8 +591,9 @@ class SearchTab(QWidget):
 
         self._clear_results()
         self._set_results_message("Searching...")
-        query = SearchQuery(intersects=intersects, limit=PAGE_SIZE)
-        self._task = SearchTask(list(groups.items()), query, self._on_results, names)
+        query = self.filters.apply(SearchQuery(intersects=intersects, limit=min(PAGE_SIZE, self.filters.max_tiles())))
+        self._sort = query.sortby
+        self._task = SearchTask(list(groups.items()), query, self._on_results, names, self.filters.max_tiles())
         self._update_search_enabled()
         QgsApplication.taskManager().addTask(self._task)
 
@@ -594,12 +603,18 @@ class SearchTab(QWidget):
             # Some sources failed but at least one answered: show what came back, and say which didn't.
             detail = "; ".join(f"{name}: {msg}" for name, msg in task.errors)
             self._warn(f"Some sources could not be searched -- {detail}")
+        if task is not None and task.notes and not error:
+            self._info("; ".join(task.notes) + ".")
         if error:
             self._set_results_message(f"Search failed: {error}")
             self._warn(f"Search failed: {error}")
             self._update_search_enabled()
             return
-        self._items = sorted(items, key=lambda i: (i.collection or "", i.id))
+        if self._sort:  # by capture date, as asked (missing dates last)
+            dated = sorted((i for i in items if i.datetime), key=lambda i: i.datetime, reverse=self._sort == "desc")
+            self._items = dated + sorted((i for i in items if not i.datetime), key=lambda i: (i.collection or "", i.id))
+        else:
+            self._items = sorted(items, key=lambda i: (i.collection or "", i.id))
         if not self._items:
             self._set_results_message("No tiles intersect the area of interest.")
             self._update_search_enabled()
@@ -647,7 +662,7 @@ class SearchTab(QWidget):
         count = len(self._items)
         text = f"{count} tile{'s' if count != 1 else ''} found"
         if truncated:
-            text += f" (showing the first {count}" + (f" of {matched}" if matched else "") + "; narrow the area to see the rest)"
+            text += f" (showing the first {count}" + (f" of {matched}" if matched else "") + "; narrow the area or add filters to see the rest)"
         self._set_results_message(text)
         self._update_search_enabled()
 

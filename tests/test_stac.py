@@ -234,3 +234,52 @@ def test_asset_band_count_from_eo_or_raster_bands():
     assert Asset.from_dict({"href": "a.tif", "eo:bands": [{}, {}, {}, {}]}).band_count == 4
     assert Asset.from_dict({"href": "a.tif", "raster:bands": [{}, {}, {}]}).band_count == 3
     assert Asset.from_dict({"href": "a.tif"}).band_count == 0
+
+
+def test_search_body_filters():
+    base = SearchQuery(intersects={"type": "Point", "coordinates": [0, 0]}, start=datetime(2025, 1, 1), end=datetime(2025, 3, 31, 23, 59, 59))
+    body = StacClient._search_body(base)
+    assert body["datetime"] == "2025-01-01T00:00:00Z/2025-03-31T23:59:59Z"
+    assert "filter" not in body and "query" not in body and "sortby" not in body
+
+    cql = StacClient._search_body(SearchQuery(intersects=base.intersects, max_cloud_cover=20))
+    assert cql["filter-lang"] == "cql2-json"
+    assert cql["filter"]["op"] == "or"  # tiles without cloud-cover data must survive the filter
+    assert {"op": "<=", "args": [{"property": "eo:cloud_cover"}, 20]} in cql["filter"]["args"]
+    assert any(a["op"] == "isNull" for a in cql["filter"]["args"])
+
+    strict = StacClient._search_body(SearchQuery(intersects=base.intersects, max_cloud_cover=0, cloud_mode="query"))
+    assert strict["query"] == {"eo:cloud_cover": {"lte": 0}} and "filter" not in strict  # 0 % is a real filter
+
+    sorted_body = StacClient._search_body(SearchQuery(intersects=base.intersects, sortby="desc"))
+    assert sorted_body["sortby"] == [{"field": "properties.datetime", "direction": "desc"}]
+
+
+def test_filters_force_post_without_an_aoi():
+    t = FakeTransport({("POST", f"{BASE}/search"): {"features": []}})
+    StacClient(BASE, t).search(SearchQuery(bbox=[0, 0, 1, 1], max_cloud_cover=10))
+    assert t.calls[0][0] == "POST" and t.calls[0][2]["bbox"] == [0, 0, 1, 1]
+
+
+def test_query_variants_degrade_in_order():
+    from kentucky_stac.stac import query_variants
+
+    plain = SearchQuery(collections=["c"])
+    assert query_variants(plain) == [plain]
+    both = SearchQuery(max_cloud_cover=20, sortby="desc")
+    assert [(v.cloud_mode, v.sortby) for v in query_variants(both)] == [
+        ("cql2", "desc"), ("cql2", None), ("query", "desc"), ("query", None)
+    ]
+    assert [(v.cloud_mode, v.sortby) for v in query_variants(SearchQuery(sortby="asc"))] == [("cql2", "asc"), ("cql2", None)]
+    assert [(v.cloud_mode, v.sortby) for v in query_variants(SearchQuery(max_cloud_cover=5))] == [("cql2", None), ("query", None)]
+
+
+def test_within_cloud_only_rejects_tiles_that_report_too_much():
+    from kentucky_stac.stac import within_cloud
+
+    cloudy = Item(properties={"eo:cloud_cover": 80})
+    clear = Item(properties={"eo:cloud_cover": 3.5})
+    silent = Item(properties={})  # radar / elevation / aerial: no cloud cover reported
+    assert not within_cloud(cloudy, 10) and within_cloud(clear, 10) and within_cloud(silent, 10)
+    assert within_cloud(cloudy, None)
+    assert within_cloud(Item(properties={"eo:cloud_cover": 10}), 10)  # the limit itself is allowed

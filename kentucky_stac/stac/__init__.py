@@ -5,7 +5,9 @@ from .client import (
     SearchQuery,
     StacClient,
     StacError,
+    query_variants,
     urllib_transport,
+    within_cloud,
 )
 from .models import Asset, Collection, Item, ItemCollection, Link
 
@@ -19,5 +21,7 @@ __all__ = [
     "SearchQuery",
     "StacClient",
     "StacError",
+    "query_variants",
+    "within_cloud",
     "urllib_transport",
 ]

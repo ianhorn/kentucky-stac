@@ -15,7 +15,7 @@ import json
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Union
 
@@ -71,6 +71,12 @@ class SearchQuery:
     ids: List[str] = field(default_factory=list)
     text: Optional[str] = None
     limit: int = 50
+    # Keep tiles with at most this much cloud cover (percent). Tiles that don't report eo:cloud_cover
+    # (SAR, elevation, aerial imagery...) are kept too when cloud_mode is "cql2", but dropped by "query"
+    # (the older query extension has no way to say "or missing").
+    max_cloud_cover: Optional[float] = None
+    cloud_mode: str = "cql2"  # how the cloud filter is sent: "cql2" (filter extension) or "query"
+    sortby: Optional[str] = None  # "desc" / "asc" on the item's datetime; None = the server's order
 
 
 def format_datetime_range(start: DateLike, end: DateLike) -> Optional[str]:
@@ -88,6 +94,28 @@ def format_datetime_range(start: DateLike, end: DateLike) -> Optional[str]:
         return v.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     return f"{fmt(start)}/{fmt(end)}"
+
+
+def query_variants(query: SearchQuery) -> List[SearchQuery]:
+    """The query as asked, then simpler forms to retry with against a server that rejects it: a cloud
+    filter goes CQL2 -> the older "query" extension (or the reverse), and the sort is dropped (the
+    caller sorts the results itself)."""
+    if query.max_cloud_cover is None:
+        modes = [query.cloud_mode]
+    else:
+        modes = [query.cloud_mode, "query" if query.cloud_mode == "cql2" else "cql2"]
+    sorts = [query.sortby, None] if query.sortby else [None]
+    return [replace(query, cloud_mode=mode, sortby=sort) for mode in modes for sort in sorts]
+
+
+def within_cloud(item: Item, max_cloud_cover: Optional[float]) -> bool:
+    """False only for a tile that reports more cloud cover than allowed -- a tile that reports none
+    (radar, elevation, aerial imagery) always passes. This is checked on the results themselves because
+    some servers accept a cloud filter and silently ignore it (Earth Search does that with CQL2)."""
+    if max_cloud_cover is None:
+        return True
+    value = item.properties.get("eo:cloud_cover")
+    return not isinstance(value, (int, float)) or value <= max_cloud_cover
 
 
 def _clamp_limit(limit: int) -> int:
@@ -141,7 +169,8 @@ class StacClient:
     def search(self, query: SearchQuery) -> ItemCollection:
         """One page of results. Uses POST /search with a JSON body when an intersects geometry is
         set, otherwise GET /search with query parameters."""
-        if query.intersects:
+        # Cloud and sort filters only exist in the POST body.
+        if query.intersects or query.max_cloud_cover is not None or query.sortby:
             body = self._search_body(query)
             return ItemCollection.from_dict(self._request("POST", f"{self._root}/search", body))
         return ItemCollection.from_dict(self._request("GET", self._search_url(query)))
@@ -191,6 +220,21 @@ class StacClient:
             body["datetime"] = dt
         if q.text and q.text.strip():
             body["q"] = [q.text]
+        if q.max_cloud_cover is not None:
+            cloud = {"property": "eo:cloud_cover"}
+            if q.cloud_mode == "query":
+                body["query"] = {"eo:cloud_cover": {"lte": q.max_cloud_cover}}
+            else:
+                body["filter-lang"] = "cql2-json"
+                body["filter"] = {
+                    "op": "or",
+                    "args": [
+                        {"op": "<=", "args": [cloud, q.max_cloud_cover]},
+                        {"op": "isNull", "args": [cloud]},
+                    ],
+                }
+        if q.sortby in ("asc", "desc"):
+            body["sortby"] = [{"field": "properties.datetime", "direction": q.sortby}]
         body["limit"] = _clamp_limit(q.limit)
         return body
 

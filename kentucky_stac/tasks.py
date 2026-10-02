@@ -10,7 +10,7 @@ from qgis.core import QgsTask
 
 from .qgis_transport import qgis_transport
 from .sources import STAC_INDEX_URL, ApiSource, CatalogEntry, parse_stac_index
-from .stac import Collection, Item, SearchQuery, StacClient
+from .stac import Collection, Item, SearchQuery, StacClient, StacError, query_variants, within_cloud
 
 
 class CollectionsTask(QgsTask):
@@ -46,6 +46,11 @@ class CollectionsTask(QgsTask):
 
 MAX_RESULTS = 2000
 PAGE_SIZE = 500
+# A server that doesn't implement a requested filter/sort extension answers with one of these.
+_UNSUPPORTED = (400, 422, 501)
+# ...and one of these means the response itself was too big or the server gave up on it.
+_TOO_BIG = (413, 500, 502, 503, 504)
+_MIN_PAGE_SIZE = 25
 
 
 class SearchTask(QgsTask):
@@ -57,12 +62,21 @@ class SearchTask(QgsTask):
     whole search, unless every source failed.
     `callback(items, matched, truncated, error)` runs on the main thread unless cancelled."""
 
-    def __init__(self, groups: Sequence[Tuple[str, List[str]]], query: SearchQuery, callback, source_names=None):
+    def __init__(
+        self,
+        groups: Sequence[Tuple[str, List[str]]],
+        query: SearchQuery,
+        callback,
+        source_names=None,
+        max_results: int = MAX_RESULTS,
+    ):
         super().__init__("Searching Kentucky STAC")
         self._groups = list(groups)
         self._query = query
         self._callback = callback
         self._names = source_names or {}
+        self._max_results = max_results
+        self.notes: List[str] = []  # things the user should know about how a source handled the filters
         self.items: List[Item] = []
         self.matched: Optional[int] = None
         self.truncated = False
@@ -90,10 +104,49 @@ class SearchTask(QgsTask):
         self.matched = total_matched if any_matched else None
         return True
 
+    def _first_page(self, client: StacClient, base: SearchQuery):
+        """The first page for `base`, trying simpler forms of the query until the server takes one:
+        returns (page, the query that worked). A cloud filter the server ignores outright (its results
+        still hold too-cloudy tiles) counts as not taken."""
+        first_error: Optional[StacError] = None
+        variants = query_variants(base)
+        for index, query in enumerate(variants):
+            try:
+                page = client.search(query)
+            except StacError as e:
+                first_error = first_error or e
+                if e.status not in _UNSUPPORTED:
+                    raise
+                continue
+            if query.max_cloud_cover is not None and not all(within_cloud(i, query.max_cloud_cover) for i in page.features):
+                first_error = first_error or StacError("the server ignored the cloud-cover filter")
+                if index < len(variants) - 1:
+                    continue  # (on the last form the results are accepted and filtered here instead)
+            return page, query
+        raise first_error
+
     def _search_one(self, base_uri: str, collection_ids: List[str]) -> Tuple[List[Item], Optional[int], bool]:
-        query = replace(self._query, collections=list(collection_ids))
+        base = replace(self._query, collections=list(collection_ids))
         client = StacClient(base_uri, qgis_transport)
-        page = client.search(query)
+        name = self._names.get(base_uri, base_uri)
+        # A big page can overflow a server's response limit (Earth Search answers 502 for 500 Sentinel-2
+        # items), so on a server error the page size is halved and the search tried again.
+        limit = base.limit
+        while True:
+            try:
+                page, query = self._first_page(client, replace(base, limit=limit))
+                break
+            except StacError as e:
+                if e.status in _TOO_BIG and limit > _MIN_PAGE_SIZE and not self.isCanceled():
+                    limit = max(_MIN_PAGE_SIZE, limit // 2)
+                    continue
+                raise
+        if base.max_cloud_cover is not None and query.cloud_mode != base.cloud_mode:
+            self.notes.append(
+                f"{name} doesn't support CQL2 filters, so the cloud filter also hides tiles that don't report cloud cover"
+            )
+        if base.sortby and not query.sortby:
+            self.notes.append(f"{name} can't sort, so its results were sorted here (the newest may be cut off by the limit)")
         matched = page.number_matched
         items = list(page.features)
         truncated = False
@@ -102,13 +155,14 @@ class SearchTask(QgsTask):
         while page.next_link is not None and page.features:
             if self.isCanceled() or (matched is not None and len(items) >= matched):
                 break
-            if len(items) >= MAX_RESULTS:
+            if len(items) >= self._max_results:
                 truncated = True
                 break
             page = client.next_page(page, query)
             if page is None:
                 break
             items.extend(page.features)
+        items = [i for i in items if within_cloud(i, base.max_cloud_cover)]
         return items, matched, truncated
 
     @property
@@ -121,7 +175,7 @@ class SearchTask(QgsTask):
     def finished(self, result: bool) -> None:
         if self.isCanceled():
             return
-        self._callback(self.items, self.matched, self.truncated, self.error)
+        self._callback(self.items[: self._max_results] if self.truncated else self.items, self.matched, self.truncated, self.error)
 
 
 class StacIndexTask(QgsTask):

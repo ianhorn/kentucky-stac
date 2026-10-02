@@ -300,6 +300,20 @@
       <li><strong>Select All</strong> / <strong>Clear Selection</strong> toggle every collection at once.</li>
       <li><strong>Search area of interest</strong> runs the STAC search, scoped to the checked collections and the current AOI.</li>
     </ul>
+    <h3>Filters</h3>
+    <p>The collapsed <strong>Filters</strong> section above the search button narrows a search; its header shows how many
+      are active, and <strong>Reset filters</strong> clears them all.</p>
+    <ul>
+      <li><strong>From / To</strong> &mdash; only tiles captured in that date range (the end day is included).</li>
+      <li><strong>Max cloud cover</strong> &mdash; imagery tabs only. Tiles that report no cloud cover (radar, elevation,
+        aerial imagery) are kept. Some servers (Earth Search, for one) can only apply this strictly, which also hides tiles
+        without cloud data; the plugin tells you when that happens.</li>
+      <li><strong>Sort</strong> &mdash; by capture date, newest or oldest first. With more matches than the limit,
+        &ldquo;Newest first&rdquo; keeps the latest. A server that can&rsquo;t sort is sorted here instead.</li>
+      <li><strong>Max tiles</strong> &mdash; the most tiles fetched per source (default 20; raise it to see more of a big result).</li>
+    </ul>
+    <p>Large catalogs such as Sentinel-2 are much faster with a date range. If a server can&rsquo;t return a big page, the
+      plugin retries with smaller pages automatically.</p>
   </section>
 
   <section id="sources">
