@@ -89,7 +89,7 @@ def test_intersects_uses_post_and_wins_over_bbox():
     )
     (method, url, body, headers) = t.calls[0]
     assert body == {"collections": ["c1"], "intersects": geom, "limit": 10}
-    assert headers["Content-Type"] == "application/geo+json"
+    assert headers["Content-Type"] == "application/json"  # stac-server ignores a geo+json body
     assert [f.id for f in page.features] == ["i1"]
 
 
@@ -142,6 +142,51 @@ def test_http_error_carries_body():
         StacClient(BASE, transport).collections()
     assert exc.value.status == 400
     assert "bad bbox" in str(exc.value)
+
+
+def test_collections_follow_next_links():
+    t = FakeTransport(
+        {
+            ("GET", f"{BASE}/collections"): {
+                "collections": [{"id": "a", "keywords": ["point cloud"], "stac_extensions": ["x/pointcloud/v1"]}],
+                "links": [{"rel": "next", "href": f"{BASE}/collections?page=2"}],
+            },
+            ("GET", f"{BASE}/collections?page=2"): {
+                "collections": [{"id": "b", "item_assets": {"visual": {}, "nir": {}}}],
+                "links": [],
+            },
+        }
+    )
+    cols = StacClient(BASE, t).collections()
+    assert [c.id for c in cols] == ["a", "b"]
+    assert cols[0].keywords == ["point cloud"] and cols[0].stac_extensions == ["x/pointcloud/v1"]
+    assert cols[1].item_asset_keys == ["visual", "nir"]
+
+
+def test_collections_stop_on_a_next_link_that_loops():
+    t = FakeTransport(
+        {("GET", f"{BASE}/collections"): {"collections": [{"id": "a"}], "links": [{"rel": "next", "href": f"{BASE}/collections"}]}}
+    )
+    assert [c.id for c in StacClient(BASE, t).collections()] == ["a"]
+    assert len(t.calls) == 1
+
+
+def test_data_asset_prefers_visual_over_per_band_data_roles():
+    # Sentinel-2 style: every band carries the data role; "visual" is the renderable composite.
+    it = Item.from_dict(
+        {
+            "id": "s2",
+            "assets": {
+                "aot": {"href": "aot.tif", "roles": ["data"]},
+                "blue": {"href": "blue.tif", "roles": ["data", "reflectance"]},
+                "visual": {"href": "visual.tif", "roles": ["visual"]},
+            },
+        }
+    )
+    assert it.data_asset().href == "visual.tif"
+    # A plain "data" key still wins outright (the KyFromAbove layout).
+    ky = Item.from_dict({"id": "k", "assets": {"visual": {"href": "v.tif"}, "data": {"href": "d.tif"}}})
+    assert ky.data_asset().href == "d.tif"
 
 
 def test_invalid_json_raises_stac_error():

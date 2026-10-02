@@ -50,6 +50,7 @@ from .mosaicjson import native_gsd, plan_mosaicjson, write_mosaicjson
 from .pdal_clip import CropPointCloudsTask, clipped_path
 from .results_layer import select_results, show_results
 from .server_layers import RegisterMosaicsTask, add_search_layer, plan_server_mosaics
+from .sources import DEFAULT_SOURCE, ApiSource, is_default_uri, source_name
 from .stac import Collection, Item, SearchQuery
 from .tasks import PAGE_SIZE, SearchTask
 from .vpc import build_vpc
@@ -58,6 +59,7 @@ _COLUMNS = ["", "Tile", "Preview"]
 _CHECKBOX_COLUMN = 0
 _TILE_COLUMN = 1
 _THUMBNAIL_SIZE = 64
+_INDEX_ROLE = Qt.ItemDataRole.UserRole + 1  # a collection row's index into SearchTab._collections
 CONFIRM_ABOVE = 25  # ask before adding more layers than this at once
 
 
@@ -184,10 +186,11 @@ class ResultCard(QWidget):
         self._size_label.setVisible(bool(text))
 
 
-def _describe(c: Collection) -> str:
+def _describe(c: Collection, source: str = "") -> str:
     start, end = (list(c.interval) + [None, None])[:2] if c.interval else (None, None)
     span = f"{(start or '?')[:10]} to {(end or 'present')[:10]}"
-    return f"{c.description}\n\n{span}" if c.description else span
+    text = f"{c.description}\n\n{span}" if c.description else span
+    return f"{text}\n\nSource: {source}" if source else text
 
 
 class SearchTab(QWidget):
@@ -195,12 +198,14 @@ class SearchTab(QWidget):
 
     reload_requested = pyqtSignal()
 
-    def __init__(self, what: str, kind: str, lidar: bool, base_uri: str, aoi_state: AoiState, message_bar=None, parent=None):
+    def __init__(self, what: str, kind: str, lidar: bool, aoi_state: AoiState, message_bar=None, parent=None):
         super().__init__(parent)
         self._what = what
         self._kind = kind  # identifies this tab's results layer
         self._lidar = lidar
-        self._base_uri = base_uri
+        self._sources: List[ApiSource] = [DEFAULT_SOURCE]
+        self._collections: List[Collection] = []  # the checklist's rows, in order
+        self._server_mosaic_note = ""
         self._aoi = aoi_state
         self._bar = message_bar
         self._task: Optional[SearchTask] = None
@@ -429,22 +434,35 @@ class SearchTab(QWidget):
         self.status.setText(f"Could not load collections: {message}")
         self._update_search_enabled()
 
+    def set_sources(self, sources: List[ApiSource]):
+        self._sources = list(sources)
+
+    def _source_label(self, base_uri: str) -> str:
+        """A source's display name, or "" for the built-in catalog (left unlabeled, as before)."""
+        return "" if is_default_uri(base_uri) else source_name(self._sources, base_uri)
+
     def set_collections(self, collections: List[Collection]):
         self._clear_collection_list()
+        self._collections = list(collections)
         self.reload_button.setEnabled(True)
         if not collections:
             self._has_collections = False
             self.status.setText(f"No {self._what} collections found.")
             self._update_search_enabled()
             return
-        # All collections start unchecked -- pick one or more before searching.
+        # All collections start unchecked -- pick one or more before searching. A collection from
+        # another source is labeled "Title · Source" so two sources' same-named collections are
+        # never ambiguous. UserRole keeps the collection id; _INDEX_ROLE holds the row's index into
+        # self._collections, since an id alone isn't unique across sources.
         self.list.blockSignals(True)
-        for c in collections:
-            item = QListWidgetItem(c.title_or_id)
+        for index, c in enumerate(collections):
+            source = self._source_label(c.source)
+            item = QListWidgetItem(f"{c.title_or_id} · {source}" if source else c.title_or_id)
             item.setData(Qt.ItemDataRole.UserRole, c.id)
+            item.setData(_INDEX_ROLE, index)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(Qt.CheckState.Unchecked)
-            item.setToolTip(_describe(c))
+            item.setToolTip(_describe(c, source))
             self.list.addItem(item)
         self.list.blockSignals(False)
         self.list.setEnabled(True)
@@ -454,12 +472,15 @@ class SearchTab(QWidget):
         self.status.setText(f"{len(collections)} collection{'s' if len(collections) != 1 else ''}")
         self._update_search_enabled()
 
-    def selected_collection_ids(self) -> List[str]:
+    def selected_collections(self) -> List[Collection]:
         return [
-            self.list.item(i).data(Qt.ItemDataRole.UserRole)
+            self._collections[self.list.item(i).data(_INDEX_ROLE)]
             for i in range(self.list.count())
             if self.list.item(i).checkState() == Qt.CheckState.Checked
         ]
+
+    def selected_collection_ids(self) -> List[str]:
+        return [c.id for c in self.selected_collections()]
 
     def select_all_collections(self):
         self.list.blockSignals(True)
@@ -528,24 +549,34 @@ class SearchTab(QWidget):
     def search(self):
         if self._task is not None or not self._has_collections:
             return
-        collection_ids = self.selected_collection_ids()
+        collections = self.selected_collections()
         try:
             intersects = self._aoi.geojson_geometry(QgsProject.instance().transformContext())
         except Exception as e:
             self._warn(f"Could not use the area of interest: {e}")
             return
-        if not collection_ids or intersects is None:
+        if not collections or intersects is None:
             return
+
+        # One search per source, each restricted to that source's checked collections.
+        groups: Dict[str, List[str]] = {}
+        for c in collections:
+            groups.setdefault(c.source or DEFAULT_SOURCE.base_uri, []).append(c.id)
+        names = {s.base_uri: s.name for s in self._sources}
 
         self._clear_results()
         self._set_results_message("Searching...")
-        query = SearchQuery(collections=collection_ids, intersects=intersects, limit=PAGE_SIZE)
-        self._task = SearchTask(self._base_uri, query, self._on_results)
+        query = SearchQuery(intersects=intersects, limit=PAGE_SIZE)
+        self._task = SearchTask(list(groups.items()), query, self._on_results, names)
         self._update_search_enabled()
         QgsApplication.taskManager().addTask(self._task)
 
     def _on_results(self, items: List[Item], matched: Optional[int], truncated: bool, error: Optional[str]):
-        self._task = None
+        task, self._task = self._task, None
+        if task is not None and task.errors and not error:
+            # Some sources failed but at least one answered: show what came back, and say which didn't.
+            detail = "; ".join(f"{name}: {msg}" for name, msg in task.errors)
+            self._warn(f"Some sources could not be searched -- {detail}")
         if error:
             self._set_results_message(f"Search failed: {error}")
             self._warn(f"Search failed: {error}")
@@ -572,9 +603,10 @@ class SearchTab(QWidget):
             checkbox = QCheckBox()
             checkbox.toggled.connect(lambda checked, row=row: row.setSelected(checked))
             self.tree.setItemWidget(row, _CHECKBOX_COLUMN, checkbox)
+            source = self._source_label(item.source)
             card = ResultCard(
                 item.id,
-                item.collection or "",
+                f"{item.collection or ''} · {source}" if source else (item.collection or ""),
                 (item.datetime or "")[:10],
                 format_size(asset.file_size) if asset else "",
                 projection=_projection_label(item),
@@ -885,10 +917,22 @@ class SearchTab(QWidget):
     def add_server_mosaic(self):
         if self._busy():
             return
-        items = self.selected_items()
+        selected = self.selected_items()
+        # The tile server only holds KyFromAbove's collections -- another source's tiles can't be
+        # registered there.
+        items = [i for i in selected if is_default_uri(i.source)]
+        skipped = len(selected) - len(items)
+        self._server_mosaic_note = (
+            f"{skipped} tile{'s' if skipped != 1 else ''} from another source left out (the server mosaic "
+            "only covers KyFromAbove)" if skipped else ""
+        )
         groups = plan_server_mosaics(items)
         if not groups:
-            self._info("Nothing to register: the selected tiles have no usable collection.")
+            self._info(
+                "Nothing to register: the server mosaic only covers KyFromAbove tiles."
+                if skipped
+                else "Nothing to register: the selected tiles have no usable collection."
+            )
             return
         self.server_mosaic_button.setText("Registering mosaic...")
         self._register_task = RegisterMosaicsTask(groups, self._on_server_mosaics_registered)
@@ -907,6 +951,8 @@ class SearchTab(QWidget):
                 extra_notes.append(message)
 
         parts = [f"Added {added} server mosaic{'s' if added != 1 else ''}"]
+        if self._server_mosaic_note:
+            parts.append(self._server_mosaic_note)
         if failed:
             first = f"{failed[0][0]}: {failed[0][1]}"
             parts.append(f"{len(failed)} failed to register (first: {first})")

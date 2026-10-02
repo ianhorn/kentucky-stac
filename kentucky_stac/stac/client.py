@@ -108,16 +108,30 @@ class StacClient:
         data = None
         if body is not None:
             data = json.dumps(body).encode("utf-8")
-            headers["Content-Type"] = "application/geo+json"
+            # Plain application/json, as the STAC API spec uses for POST /search: stac-server (e.g.
+            # Earth Search) silently ignores a geo+json body and returns its whole catalog unfiltered.
+            headers["Content-Type"] = "application/json"
         raw = self._transport(method, url, data, headers)
         try:
             return json.loads(raw)
         except ValueError as e:
             raise StacError(f"STAC API returned invalid JSON from {url}") from e
 
-    def collections(self) -> List[Collection]:
-        data = self._request("GET", f"{self._root}/collections")
-        return [Collection.from_dict(c) for c in data.get("collections") or []]
+    def collections(self, max_pages: int = 20) -> List[Collection]:
+        """Every collection, following rel="next" links -- KyFromAbove returns them all at once,
+        but some STAC APIs paginate /collections. max_pages guards against a server whose next
+        link never runs out."""
+        url: Optional[str] = f"{self._root}/collections"
+        found: List[Collection] = []
+        seen = set()
+        for _ in range(max_pages):
+            if not url or url in seen:
+                break
+            seen.add(url)
+            data = self._request("GET", url)
+            found.extend(Collection.from_dict(c) for c in data.get("collections") or [])
+            url = next((l.get("href") for l in data.get("links") or [] if l.get("rel") == "next"), None)
+        return found
 
     def get_item(self, collection_id: str, item_id: str) -> Item:
         q = urllib.parse.quote

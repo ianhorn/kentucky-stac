@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Iterable, List, Optional, Tuple
 
+from .sources import is_default_uri
 from .stac import Asset, Collection, Item
 
 # The tiles checked so far are all NAD83 / Kentucky Single Zone (ftUS). Only assumed as a fallback
@@ -14,15 +15,29 @@ DEFAULT_CRS = "EPSG:3089"
 # LiDAR items, whose own /search response never carries a thumbnail asset at all.
 LIDAR_THUMBNAIL_BASE = "https://kyfromabove-stac.s3.us-west-2.amazonaws.com"
 
+_POINTCLOUD_KEYWORDS = {"point cloud", "pointcloud", "point-cloud", "copc"}
+
 
 def is_lidar_collection(collection: Collection) -> bool:
-    """The catalog names its point-cloud collections "laz-phaseN"."""
-    return collection.id.lower().startswith("laz")
+    """Whether a collection belongs on the LiDAR (point cloud) tab.
+
+    The built-in catalog names its point-cloud collections "laz-phaseN". Another STAC API's naming
+    is unknown, so its collections are judged by what they declare: the STAC pointcloud extension,
+    a "point cloud"/"copc" keyword, or a point-cloud-looking item asset. A bare "lidar" keyword is
+    deliberately NOT enough -- LiDAR-derived DEMs carry it too, and belong on the raster tab."""
+    if is_default_uri(collection.source):
+        return collection.id.lower().startswith("laz")
+    if any("pointcloud" in ext.lower() for ext in collection.stac_extensions):
+        return True
+    if any(k.strip().lower() in _POINTCLOUD_KEYWORDS for k in collection.keywords):
+        return True
+    return any(k.lower() in ("pointcloud", "copc", "laz") for k in collection.item_asset_keys)
 
 
 def split_collections(collections: Iterable[Collection]) -> Tuple[List[Collection], List[Collection]]:
-    """Split into (imagery_and_dem, lidar), each sorted by id (so phases stay in order)."""
-    ordered = sorted(collections, key=lambda c: c.id)
+    """Split into (imagery_and_dem, lidar). Built-in collections come first, sorted by id (so
+    phases stay in order); any other source's follow, grouped by source."""
+    ordered = sorted(collections, key=lambda c: (not is_default_uri(c.source), c.source, c.id))
     lidar = [c for c in ordered if is_lidar_collection(c)]
     other = [c for c in ordered if not is_lidar_collection(c)]
     return other, lidar
@@ -54,7 +69,8 @@ def thumbnail_href(item: Item, lidar: bool) -> Optional[str]:
     asset = item.thumbnail_asset()
     if asset is not None and asset.href:
         return asset.href
-    if lidar and item.collection and item.id:
+    # The reconstructed URL is KyFromAbove's own bucket layout -- meaningless for another API.
+    if lidar and item.collection and item.id and is_default_uri(item.source):
         return f"{LIDAR_THUMBNAIL_BASE}/collections/{item.collection}/thumbnails/{item.id}.png"
     return None
 

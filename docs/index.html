@@ -225,6 +225,7 @@
     <a href="#installation">Installation</a>
     <a href="#aoi">Area of interest</a>
     <a href="#searching">Searching</a>
+    <a href="#sources">Other STAC APIs</a>
     <a href="#results">Results list</a>
     <a href="#imagery-actions">Imagery / DEM actions</a>
     <a href="#lidar-actions">LiDAR actions</a>
@@ -298,6 +299,26 @@
       <li><strong>Select All</strong> / <strong>Clear Selection</strong> toggle every collection at once.</li>
       <li><strong>Search area of interest</strong> runs the STAC search, scoped to the checked collections and the current AOI.</li>
     </ul>
+  </section>
+
+  <section id="sources">
+    <h2>Other STAC APIs (experimental)</h2>
+    <p class="lede">Besides the built-in KyFromAbove catalog, the dock can search any public STAC API &mdash;
+      picked from <a href="https://stacindex.org" target="_blank" rel="noopener">STAC Index</a> or typed in by URL.</p>
+    <ul>
+      <li><strong>Sources...</strong> (above the tabs) opens the source list. Choose a catalog from the
+        <strong>STAC Index</strong> dropdown (which fills in a name and URL), or type an API base URL yourself.</li>
+      <li><strong>Add</strong> searches the new API alongside the current sources; <strong>Replace all sources</strong>
+        searches only it. Picking <strong>KyFromAbove</strong> from the dropdown is the way back to the default.</li>
+      <li>Another source's collections are labeled <code>Title &middot; Source name</code> in the checklist and in
+        the results. Point cloud collections (declared via the STAC pointcloud extension, a "point cloud" keyword,
+        or a COPC asset) go on the LiDAR tab; everything else goes on Imagery / DEM.</li>
+      <li>Each source loads and searches independently: an unreachable API is reported, but doesn't stop the others.</li>
+      <li>The source list is remembered between QGIS sessions.</li>
+    </ul>
+    <p>Other APIs implement STAC differently, so thumbnails, adding to the map, or downloads may not work for
+      every one. Assets on <code>s3://</code> URLs (e.g. NAIP on Earth Search, which is requester-pays) can't be
+      read without AWS credentials. The <strong>server mosaic</strong> only covers KyFromAbove tiles.</p>
   </section>
 
   <section id="results">

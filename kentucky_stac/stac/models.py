@@ -69,6 +69,9 @@ class Item:
     properties: Dict[str, Any] = field(default_factory=dict)
     assets: Dict[str, Asset] = field(default_factory=dict)
     links: List[Link] = field(default_factory=list)
+    # Base URL of the STAC API this item came from -- set by the caller after a search, not part
+    # of the STAC document. "" means unknown (treated as the built-in catalog).
+    source: str = ""
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "Item":
@@ -91,12 +94,22 @@ class Item:
         return self.properties.get("proj:epsg")
 
     def data_asset(self) -> Optional[Asset]:
-        """The primary data asset (COG/LAZ): key "data", else a data-role asset, else the
-        first asset that doesn't look like a thumbnail or metadata."""
+        """The primary data asset (COG/LAZ): key "data", else a "visual" composite, else a
+        data-role asset, else the first asset that doesn't look like a thumbnail or metadata.
+
+        "visual" comes before the data role because multi-band catalogs (e.g. Sentinel-2 on Earth
+        Search) mark every single band -- aerosol, water vapour, red, nir... -- with the data role,
+        so the first one in dict order is usually an unrenderable band rather than the true-color
+        composite the catalog also offers."""
         if not self.assets:
             return None
         if "data" in self.assets:
             return self.assets["data"]
+        if "visual" in self.assets:
+            return self.assets["visual"]
+        for a in self.assets.values():
+            if "visual" in a.roles:
+                return a
         for a in self.assets.values():
             if "data" in a.roles:
                 return a
@@ -157,6 +170,12 @@ class Collection:
     bbox: Optional[List[float]] = None
     # [start, end] of the first temporal interval; either may be None (open-ended)
     interval: Optional[List[Optional[str]]] = None
+    keywords: List[str] = field(default_factory=list)
+    stac_extensions: List[str] = field(default_factory=list)
+    item_asset_keys: List[str] = field(default_factory=list)
+    # Base URL of the STAC API this collection came from -- set by the caller, not part of the
+    # STAC document. "" means unknown (treated as the built-in catalog).
+    source: str = ""
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "Collection":
@@ -170,6 +189,9 @@ class Collection:
             license=d.get("license"),
             bbox=bboxes[0] if bboxes else None,
             interval=intervals[0] if intervals else None,
+            keywords=[str(k) for k in d.get("keywords") or [] if k],
+            stac_extensions=[str(e) for e in d.get("stac_extensions") or [] if e],
+            item_asset_keys=list((d.get("item_assets") or {}).keys()),
         )
 
     @property
