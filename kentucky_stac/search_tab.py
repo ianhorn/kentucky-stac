@@ -44,6 +44,7 @@ from .downloads import (
     default_concurrency,
     plan_downloads,
 )
+from . import s3
 from .item_json import item_json_text, json_to_html
 from .json_card import ItemJsonHover
 from .layers import AddLayersTask, LayerSpec, already_on_map, item_bbox, layer_specs, local_specs, union_bbox
@@ -671,7 +672,7 @@ class SearchTab(QWidget):
             href = thumbnail_href(item, self._lidar)
             if not href:
                 continue
-            reply = QgsNetworkAccessManager.instance().get(QNetworkRequest(QUrl(href)))
+            reply = QgsNetworkAccessManager.instance().get(QNetworkRequest(QUrl(s3.to_https(href))))
             self._thumb_replies.append(reply)
             reply.finished.connect(lambda reply=reply, row=row: self._on_thumbnail_fetched(reply, row))
 
@@ -809,7 +810,7 @@ class SearchTab(QWidget):
         for item in items:
             asset = primary_asset(item, True)
             if asset is not None and asset.href and asset.is_copc:
-                entries.append((item, asset.href))
+                entries.append((item, s3.to_https(asset.href)))
             else:
                 skipped += 1
         if len(entries) < 2:

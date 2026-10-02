@@ -24,6 +24,7 @@ from qgis.core import (
     QgsTask,
 )
 
+from . import s3
 from .catalog import DEFAULT_CRS, primary_asset
 from .gdal_setup import setup_gdal
 from .stac import Item
@@ -44,7 +45,22 @@ class LayerSpec:
     bbox: Optional[Bbox] = None  # where the catalog says the tile is, used to catch a wrong CRS
 
 
+_payer_set = False
+
+
 def raster_uri(href: str) -> str:
+    if s3.is_s3(href):
+        if s3.credentials_available():
+            # Signed with the user's AWS credentials (GDAL reads them itself). Requester-pays buckets also
+            # need this header, which GDAL only takes as a setting -- harmless for ordinary buckets.
+            global _payer_set
+            if not _payer_set:
+                from osgeo import gdal
+
+                gdal.SetConfigOption("AWS_REQUEST_PAYER", "requester")
+                _payer_set = True
+            return s3.vsis3_path(href)
+        href = s3.to_https(href)  # a public bucket
     # list_dir=no stops GDAL from probing the "directory" around each tile (several extra requests).
     return f"/vsicurl?list_dir=no&url={href}"
 
@@ -61,7 +77,7 @@ def layer_specs(items: Iterable[Item], lidar: bool) -> Tuple[List[LayerSpec], Li
             skipped.append(item)
         elif lidar:
             if asset.is_copc:
-                specs.append(LayerSpec(item.id, asset.href, "copc", bbox))
+                specs.append(LayerSpec(item.id, s3.to_https(asset.href), "copc", bbox))
             else:
                 skipped.append(item)
         else:

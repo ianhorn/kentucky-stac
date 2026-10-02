@@ -318,8 +318,12 @@
       <li>The source list is remembered between QGIS sessions.</li>
     </ul>
     <p>Other APIs implement STAC differently, so thumbnails, adding to the map, or downloads may not work for
-      every one. Assets on <code>s3://</code> URLs (e.g. NAIP on Earth Search, which is requester-pays) can't be
-      read without AWS credentials. The built-in <strong>server mosaic</strong> only covers KyFromAbove tiles. To make one from another
+      every one. Files at <code>s3://</code> addresses (common outside KyFromAbove) are handled for you:
+      public ones are downloaded and streamed through their https address. Private and requester-pays buckets
+      (e.g. NAIP on Earth Search) need your own AWS credentials, set as the <code>AWS_ACCESS_KEY_ID</code> /
+      <code>AWS_SECRET_ACCESS_KEY</code> environment variables or in <code>~/.aws/credentials</code>
+      (restart QGIS after setting them). With credentials found, files are read through GDAL&rsquo;s signed S3
+      access, and for requester-pays buckets the transfer charges go to your AWS account. The built-in <strong>server mosaic</strong> only covers KyFromAbove tiles. To make one from another
       source, <strong>bring your own titiler</strong>: click <strong>Add as server mosaic</strong> and QGIS asks for the server
       URL (remembered per source), or set it under <strong>Sources... &rarr; Tile server...</strong>. This is <strong>experimental</strong>.
       Two kinds of server work, and the plugin works out which yours is:</p>
