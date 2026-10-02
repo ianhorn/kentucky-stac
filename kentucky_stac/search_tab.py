@@ -26,6 +26,7 @@ from qgis.PyQt.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QSpinBox,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -34,7 +35,15 @@ from qgis.PyQt.QtWidgets import (
 
 from .aoi import AoiState, wkt_parts
 from .catalog import format_size, primary_asset, thumbnail_href
-from .downloads import DownloadJob, DownloadManager, SizesTask, plan_downloads
+from .downloads import (
+    MAX_DOWNLOAD_CONCURRENCY,
+    MIN_DOWNLOAD_CONCURRENCY,
+    DownloadJob,
+    DownloadManager,
+    SizesTask,
+    default_concurrency,
+    plan_downloads,
+)
 from .layers import AddLayersTask, LayerSpec, already_on_map, item_bbox, layer_specs, local_specs, union_bbox
 from .mosaic import BuildMosaicsTask, plan_mosaics
 from .mosaicjson import native_gsd, plan_mosaicjson, write_mosaicjson
@@ -313,6 +322,23 @@ class SearchTab(QWidget):
             )
             self.server_mosaic_button.setEnabled(False)
             self.server_mosaic_button.clicked.connect(self.add_server_mosaic)
+        # How many files download() at once (DownloadManager's own max_parallel) -- ported from the
+        # old ArcGIS Pro add-in's "Parallel Downloads" option, which this plugin otherwise had no
+        # equivalent of (a flat default of 3, not adjustable). Shared by both tabs via one QgsSettings
+        # key, same as mosaic_dir/download_dir.
+        self.concurrency_label = QLabel("Downloads at once")
+        self.concurrency_spin = QSpinBox()
+        self.concurrency_spin.setRange(MIN_DOWNLOAD_CONCURRENCY, MAX_DOWNLOAD_CONCURRENCY)
+        self.concurrency_spin.setValue(
+            int(QgsSettings().value("kentucky_stac/download_concurrency", default_concurrency()))
+        )
+        self.concurrency_spin.setToolTip(
+            "How many files download at the same time. Higher can be faster, but may get throttled "
+            "by the server or saturate your connection."
+        )
+        self.concurrency_spin.valueChanged.connect(
+            lambda value: QgsSettings().setValue("kentucky_stac/download_concurrency", value)
+        )
         # Crops to the AOI's actual shape rather than the tiles' full rectangular extent -- a GDAL
         # warp cutline for a raster mosaic, PDAL filters.crop (see pdal_clip.py) for downloaded point
         # clouds. Only makes sense for a polygon AOI; disabled otherwise (see _update_search_enabled).
@@ -367,6 +393,11 @@ class SearchTab(QWidget):
             layout.addLayout(export_row)
         if self.server_mosaic_button is not None:
             layout.addWidget(self.server_mosaic_button)
+        concurrency_row = QHBoxLayout()
+        concurrency_row.addWidget(self.concurrency_label)
+        concurrency_row.addWidget(self.concurrency_spin)
+        concurrency_row.addStretch(1)
+        layout.addLayout(concurrency_row)
         layout.addWidget(self.clip_to_aoi)
         layout.addWidget(self.add_when_done)
         layout.addLayout(progress_row)
@@ -943,7 +974,7 @@ class SearchTab(QWidget):
         return QMessageBox.question(self, "Download tiles", text) == QMessageBox.StandardButton.Yes
 
     def _begin_download(self, jobs: List[DownloadJob], sizes: Dict[str, Optional[int]]):
-        self._download = DownloadManager(jobs, sizes, parent=self)
+        self._download = DownloadManager(jobs, sizes, max_parallel=self.concurrency_spin.value(), parent=self)
         self._download.progress.connect(self._on_download_progress)
         self._download.finished.connect(self._finish_download_run)
         self.progress.setValue(0)

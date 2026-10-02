@@ -19,6 +19,16 @@ from .stac import Item
 
 MAX_PARALLEL_DOWNLOADS = 3
 SIZE_LOOKUP_WORKERS = 8
+MIN_DOWNLOAD_CONCURRENCY = 1
+MAX_DOWNLOAD_CONCURRENCY = 16
+
+
+def default_concurrency() -> int:
+    """75% of logical cores, the same default the old ArcGIS Pro add-in's "Parallel Downloads"
+    option used -- a download is network-bound, not CPU-bound, but this matches the efficiency the
+    user asked to carry over rather than inventing a different heuristic."""
+    cores = os.cpu_count() or 4
+    return min(MAX_DOWNLOAD_CONCURRENCY, max(MIN_DOWNLOAD_CONCURRENCY, round(cores * 0.75)))
 
 
 @dataclass(frozen=True)
