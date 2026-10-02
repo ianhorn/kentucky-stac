@@ -37,7 +37,7 @@ from .tasks import StacIndexTask
 _WARNING = (
     "<b>Experimental.</b> Other STAC APIs implement the spec differently, so results, thumbnails "
     "or downloads from them may behave differently or fail. The server mosaic only works for another "
-    "API if you give it a titiler-pgstac server that serves that API's catalog."
+    "API if you give it a titiler / titiler-pgstac server that serves that API's catalog."
 )
 
 
@@ -64,7 +64,7 @@ class SourcesDialog(QDialog):
         self.remove_button.clicked.connect(self._remove_selected)
         self.tiler_button = QPushButton("Tile server...")
         self.tiler_button.setToolTip(
-            "Set the titiler-pgstac server used for \"Add as server mosaic\" with the selected source's tiles"
+            "Set the titiler / titiler-pgstac server used for \"Add as server mosaic\" with the selected source's tiles"
         )
         self.tiler_button.clicked.connect(self._edit_tiler)
         side_buttons = QVBoxLayout()
@@ -89,7 +89,7 @@ class SourcesDialog(QDialog):
         self.error_label.setVisible(False)
 
         self.tiler_edit = QLineEdit()
-        self.tiler_edit.setPlaceholderText("Optional: titiler-pgstac server for \"Add as server mosaic\"")
+        self.tiler_edit.setPlaceholderText("Optional: titiler / titiler-pgstac server for \"Add as server mosaic\"")
 
         form = QFormLayout()
         form.addRow("STAC Index", self.catalog_combo)
@@ -164,7 +164,7 @@ class SourcesDialog(QDialog):
         text, ok = QInputDialog.getText(
             self,
             "Tile server",
-            f"Base URL of a titiler-pgstac server that serves {source.name}'s catalog (blank to clear):",
+            f"Base URL of a titiler / titiler-pgstac server that serves {source.name}'s catalog (blank to clear):",
             text=source.tiler_url,
         )
         url = normalize_url(text)

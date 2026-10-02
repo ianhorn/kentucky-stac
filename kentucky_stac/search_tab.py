@@ -447,7 +447,7 @@ class SearchTab(QWidget):
             self,
             "Tile server",
             f"The built-in server mosaic only covers KyFromAbove. To make one from {name}, enter the base URL "
-            "of a titiler-pgstac server that serves this API's catalog:",
+            "of a titiler / titiler-pgstac server that serves this API's catalog:",
             text="https://",
         )
         url = normalize_url(text)
