@@ -11,6 +11,8 @@ from kentucky_stac.sources import (
     parse_stac_index,
     serialize_sources,
     source_name,
+    tiler_for,
+    with_tiler_url,
 )
 from kentucky_stac.stac import DEFAULT_BASE_URI, Collection, Item
 
@@ -105,3 +107,29 @@ def test_lidar_thumbnail_fallback_is_kentucky_only():
     other = Item(id="t", collection="laz-phase3", source=OTHER)
     assert thumbnail_href(ky, lidar=True) is not None
     assert thumbnail_href(other, lidar=True) is None
+
+
+def test_tiler_url_persists_and_is_validated():
+    tiler = "https://titiler.example.com"
+    src = ApiSource("ES", OTHER, tiler_url=tiler)
+    assert deserialize_sources(serialize_sources([DEFAULT_SOURCE, src])) == [DEFAULT_SOURCE, src]
+    # Older saved lists (no tiler_url) and junk values load as "no tile server".
+    assert deserialize_sources('[{"name": "ES", "base_uri": "%s"}]' % OTHER)[0].tiler_url == ""
+    assert deserialize_sources('[{"name": "ES", "base_uri": "%s", "tiler_url": "nonsense"}]' % OTHER)[0].tiler_url == ""
+
+
+def test_add_source_with_tiler_and_with_tiler_url():
+    added = add_source([DEFAULT_SOURCE], "ES", OTHER, replace=False, tiler_url="https://t.example/")
+    assert added[1].tiler_url == "https://t.example"
+    assert add_source([DEFAULT_SOURCE], "ES", OTHER, replace=False, tiler_url="bad")[1].tiler_url == ""
+    changed = with_tiler_url(added, OTHER + "/", "https://other.example")
+    assert changed[1].tiler_url == "https://other.example" and changed[0] == DEFAULT_SOURCE
+    assert tiler_for(changed, OTHER) == "https://other.example" and tiler_for(changed, DEFAULT_BASE_URI) == ""
+    assert with_tiler_url(changed, OTHER, "")[1].tiler_url == ""
+    # The built-in source never takes a tile server override.
+    assert with_tiler_url([DEFAULT_SOURCE], DEFAULT_BASE_URI, "https://x.example") == [DEFAULT_SOURCE]
+
+
+def test_data_asset_key():
+    it = Item.from_dict({"id": "x", "assets": {"thumbnail": {"href": "t.png"}, "visual": {"href": "v.tif"}}})
+    assert it.data_asset_key() == "visual" and Item().data_asset_key() is None

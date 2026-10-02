@@ -8,6 +8,7 @@ from .aoi_bar import AoiBar
 from .catalog import split_collections
 from .search_tab import SearchTab
 from .sources import ApiSource, deserialize_sources, serialize_sources
+from .feedback_dialog import FeedbackDialog, open_help
 from .sources_dialog import SourcesDialog
 from .stac import Collection
 from .tasks import CollectionsTask
@@ -34,15 +35,25 @@ class KentuckyStacDock(QDockWidget):
         self.sources_button = QPushButton("Sources...")
         self.sources_button.setToolTip("Search another STAC API, from STAC Index or by URL (experimental)")
         self.sources_button.clicked.connect(self.edit_sources)
+        # Feedback / Help share the row rather than adding one: same pair as the ArcGIS Pro add-ins.
+        self.feedback_button = QPushButton("Feedback")
+        self.feedback_button.setToolTip("Report a bug, request a feature, or send feedback directly.")
+        self.feedback_button.clicked.connect(lambda: FeedbackDialog(self).exec())
+        self.help_button = QPushButton("Help")
+        self.help_button.setToolTip("Open the Kentucky STAC documentation site.")
+        self.help_button.clicked.connect(lambda: open_help(self))
         sources_row = QHBoxLayout()
         sources_row.addWidget(self.sources_label, 1)
         sources_row.addWidget(self.sources_button)
+        sources_row.addWidget(self.feedback_button)
+        sources_row.addWidget(self.help_button)
 
         bar = iface.messageBar()
         self.imagery_tab = SearchTab("imagery and DEM", "imagery", False, self.aoi_state, bar)
         self.lidar_tab = SearchTab("point cloud", "lidar", True, self.aoi_state, bar)
         for tab in (self.imagery_tab, self.lidar_tab):
             tab.reload_requested.connect(self.load_collections)
+            tab.sources_changed.connect(self.set_sources)
             tab.set_sources(self.sources)
 
         self.tabs = QTabWidget()
@@ -79,12 +90,15 @@ class KentuckyStacDock(QDockWidget):
     def set_sources(self, sources: List[ApiSource]):
         if sources == self.sources:
             return
+        # A tile server URL change alone doesn't need the collections fetched again.
+        reload = [(s.name, s.base_uri) for s in sources] != [(s.name, s.base_uri) for s in self.sources]
         self.sources = list(sources)
         QgsSettings().setValue(SOURCES_SETTINGS_KEY, serialize_sources(self.sources))
         self._update_sources_label()
         for tab in (self.imagery_tab, self.lidar_tab):
             tab.set_sources(self.sources)
-        self.load_collections()
+        if reload:
+            self.load_collections()
 
     # ---- collections -----------------------------------------------------------------------
 

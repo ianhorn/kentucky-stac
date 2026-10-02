@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import urllib.parse
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Iterable, List, Optional
 
 from .stac import DEFAULT_BASE_URI
@@ -25,6 +25,9 @@ class ApiSource:
     name: str
     base_uri: str
     is_default: bool = False
+    # Optional titiler-pgstac server backed by this API's catalog, for "Add as server mosaic".
+    # The built-in source ignores it (it has its own tile server, see server_layers.tiler_url).
+    tiler_url: str = ""
 
 
 DEFAULT_SOURCE = ApiSource(BUILTIN_NAME, DEFAULT_BASE_URI, is_default=True)
@@ -112,7 +115,7 @@ def parse_stac_index(data: Any) -> List[CatalogEntry]:
 
 
 def serialize_sources(sources: Iterable[ApiSource]) -> str:
-    return json.dumps([{"name": s.name, "base_uri": s.base_uri} for s in sources])
+    return json.dumps([{"name": s.name, "base_uri": s.base_uri, "tiler_url": s.tiler_url} for s in sources])
 
 
 def deserialize_sources(text: Optional[str]) -> List[ApiSource]:
@@ -136,15 +139,21 @@ def deserialize_sources(text: Optional[str]) -> List[ApiSource]:
             sources.append(DEFAULT_SOURCE)
         else:
             name = str(el.get("name") or "").strip() or uri
-            sources.append(ApiSource(name, uri))
+            tiler = normalize_url(str(el.get("tiler_url") or ""))
+            sources.append(ApiSource(name, uri, tiler_url=tiler if is_valid_api_url(tiler) else ""))
     return sources or [DEFAULT_SOURCE]
 
 
-def add_source(sources: List[ApiSource], name: str, url: str, replace: bool) -> List[ApiSource]:
+def add_source(sources: List[ApiSource], name: str, url: str, replace: bool, tiler_url: str = "") -> List[ApiSource]:
     """The source list after adding (or, with replace, switching to) the API at url. Picking the
     built-in catalog's URL yields DEFAULT_SOURCE itself, not a user-named copy."""
     uri = normalize_url(url)
-    new = DEFAULT_SOURCE if is_default_uri(uri) else ApiSource((name or "").strip() or uri, uri)
+    tiler = normalize_url(tiler_url)
+    new = (
+        DEFAULT_SOURCE
+        if is_default_uri(uri)
+        else ApiSource((name or "").strip() or uri, uri, tiler_url=tiler if is_valid_api_url(tiler) else "")
+    )
     if replace:
         return [new]
     if any(normalize_url(s.base_uri).lower() == uri.lower() for s in sources):
@@ -158,3 +167,23 @@ def source_name(sources: Iterable[ApiSource], base_uri: str) -> str:
         if normalize_url(s.base_uri).lower() == uri:
             return s.name
     return BUILTIN_NAME if is_default_uri(base_uri) else base_uri
+
+
+def with_tiler_url(sources: Iterable[ApiSource], base_uri: str, tiler_url: str) -> List[ApiSource]:
+    """The source list with one source's tile server URL set (or cleared, with ""). The built-in
+    source is never changed."""
+    uri = normalize_url(base_uri).lower()
+    tiler = normalize_url(tiler_url)
+    return [
+        replace(s, tiler_url=tiler) if not s.is_default and normalize_url(s.base_uri).lower() == uri else s
+        for s in sources
+    ]
+
+
+def tiler_for(sources: Iterable[ApiSource], base_uri: str) -> str:
+    """The tile server URL configured for a source, or "" if none."""
+    uri = normalize_url(base_uri).lower()
+    for s in sources:
+        if not s.is_default and normalize_url(s.base_uri).lower() == uri:
+            return s.tiler_url
+    return ""

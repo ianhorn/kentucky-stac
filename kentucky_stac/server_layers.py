@@ -9,12 +9,14 @@ Content, which QGIS's XYZ provider treats as an empty tile rather than an error.
 from __future__ import annotations
 
 import json
+import urllib.parse
 from dataclasses import dataclass
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 from qgis.core import QgsProject, QgsRasterLayer, QgsSettings, QgsTask
 
 from .qgis_transport import qgis_transport
+from .sources import is_default_uri
 from .stac import Item
 
 DEFAULT_TILER_URL = "https://vdo05uew72.execute-api.us-west-2.amazonaws.com"
@@ -61,6 +63,12 @@ def default_style_for(collection_id: str) -> Optional[Style]:
     return styles[0] if styles else None
 
 
+def generic_style(asset: str) -> Style:
+    """For a collection on someone else's tile server, whose layout is unknown: render the tile's
+    own data asset as-is, with no band selection or color ramp (those are KyFromAbove specifics)."""
+    return Style("color", "Color", f"assets={urllib.parse.quote(asset, safe='')}")
+
+
 def search_tile_url(base: str, search_id: str, style: Style, fmt: str = "png") -> str:
     return f"{base.rstrip('/')}/searches/{search_id}/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}.{fmt}?{style.query}"
 
@@ -71,8 +79,9 @@ def xyz_uri(url: str, zmin: int = 0, zmax: int = 22) -> str:
     return f"type=xyz&url={url.replace('&', '%26')}&zmax={zmax}&zmin={zmin}"
 
 
-def mosaic_layer_name(collection_id: str, style: Style, tile_count: int) -> str:
-    return f"Ky STAC {collection_id} mosaic ({tile_count} tile{'s' if tile_count != 1 else ''}, {style.label.split(' (')[0].lower()})"
+def mosaic_layer_name(collection_id: str, style: Style, tile_count: int, source: str = "") -> str:
+    where = f"{collection_id} · {source}" if source else collection_id
+    return f"Ky STAC {where} mosaic ({tile_count} tile{'s' if tile_count != 1 else ''}, {style.label.split(' (')[0].lower()})"
 
 
 def add_xyz_layer(url: str, name: str, project: Optional[QgsProject] = None) -> Tuple[Optional[QgsRasterLayer], str]:
@@ -93,11 +102,13 @@ def add_xyz_layer(url: str, name: str, project: Optional[QgsProject] = None) -> 
 
 
 def add_search_layer(
-    search_id: str, collection_id: str, style: Style, tile_count: int, project: Optional[QgsProject] = None
+    search_id: str, group: "MosaicGroup", style: Style, project: Optional[QgsProject] = None
 ) -> Tuple[Optional[QgsRasterLayer], str]:
     """Add an XYZ layer for a registered search (a mosaic of specific tiles) to the "Ky STAC" group."""
     return add_xyz_layer(
-        search_tile_url(tiler_url(), search_id, style), mosaic_layer_name(collection_id, style, tile_count), project
+        search_tile_url(group.tiler, search_id, style),
+        mosaic_layer_name(group.collection_id, style, len(group.ids), group.source_name),
+        project,
     )
 
 
@@ -105,18 +116,36 @@ def add_search_layer(
 class MosaicGroup:
     collection_id: str
     ids: Tuple[str, ...]
+    tiler: str = ""  # the titiler-pgstac base URL this group is registered with
+    source_name: str = ""  # "" for the built-in catalog
+    asset: str = ""  # the data asset to render, for a source other than the built-in one ("" = built-in)
 
 
-def plan_server_mosaics(items: Iterable[Item]) -> List[MosaicGroup]:
-    """Group items by collection (each collection needs its own registered search and its own
-    render style), skipping any item with no collection id. Unlike the local VRT mosaic, a group of
-    just one tile is kept -- registering a search restricted to one tile is still useful (a precise
-    XYZ crop instead of the whole state), and costs nothing extra."""
-    groups: Dict[str, List[str]] = {}
+def plan_server_mosaics(
+    items: Iterable[Item],
+    tiler_for_source: Callable[[str], str],
+    name_for_source: Callable[[str], str] = lambda _uri: "",
+) -> List[MosaicGroup]:
+    """Group items by (source, collection) -- each needs its own registered search, tile server and
+    render style -- skipping any item with no collection id or no tile server (tiler_for_source
+    returns "" for a source with none). Unlike the local VRT mosaic, a group of just one tile is
+    kept -- registering a search restricted to one tile is still useful (a precise XYZ crop instead
+    of the whole state), and costs nothing extra."""
+    groups: Dict[Tuple[str, str], List[Item]] = {}
     for item in items:
         if item.collection:
-            groups.setdefault(item.collection, []).append(item.id)
-    return [MosaicGroup(cid, tuple(ids)) for cid, ids in sorted(groups.items())]
+            groups.setdefault((item.source if not is_default_uri(item.source) else "", item.collection), []).append(item)
+    planned = []
+    for (source, cid), members in sorted(groups.items()):
+        tiler = tiler_for_source(source)
+        if not tiler:
+            continue
+        if source:  # another API's tile server: render whichever asset its tiles' data lives in
+            asset = next((k for k in (m.data_asset_key() for m in members) if k), "data")
+            planned.append(MosaicGroup(cid, tuple(m.id for m in members), tiler.rstrip("/"), name_for_source(source), asset))
+        else:
+            planned.append(MosaicGroup(cid, tuple(m.id for m in members), tiler.rstrip("/")))
+    return planned
 
 
 def register_search(base: str, collection_id: str, ids: Iterable[str]) -> dict:
@@ -145,16 +174,15 @@ class RegisterMosaicsTask(QgsTask):
         self.failed: list = []
 
     def run(self) -> bool:
-        base = tiler_url()
         for group in self._groups:
             if self.isCanceled():
                 return False
-            style = default_style_for(group.collection_id)
+            style = generic_style(group.asset) if group.asset else default_style_for(group.collection_id)
             if style is None:
                 self.failed.append((group.collection_id, "this collection has no renderable style"))
                 continue
             try:
-                result = register_search(base, group.collection_id, group.ids)
+                result = register_search(group.tiler, group.collection_id, group.ids)
                 self.built.append((group, result["id"], style))
             except Exception as e:
                 self.failed.append((group.collection_id, str(e)))

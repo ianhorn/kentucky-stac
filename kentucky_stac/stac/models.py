@@ -93,8 +93,8 @@ class Item:
     def epsg(self) -> Optional[int]:
         return self.properties.get("proj:epsg")
 
-    def data_asset(self) -> Optional[Asset]:
-        """The primary data asset (COG/LAZ): key "data", else a "visual" composite, else a
+    def data_asset_key(self) -> Optional[str]:
+        """The key of the primary data asset (COG/LAZ): "data", else a "visual" composite, else a
         data-role asset, else the first asset that doesn't look like a thumbnail or metadata.
 
         "visual" comes before the data role because multi-band catalogs (e.g. Sentinel-2 on Earth
@@ -104,20 +104,24 @@ class Item:
         if not self.assets:
             return None
         if "data" in self.assets:
-            return self.assets["data"]
+            return "data"
         if "visual" in self.assets:
-            return self.assets["visual"]
-        for a in self.assets.values():
+            return "visual"
+        for key, a in self.assets.items():
             if "visual" in a.roles:
-                return a
-        for a in self.assets.values():
+                return key
+        for key, a in self.assets.items():
             if "data" in a.roles:
-                return a
+                return key
         for key, a in self.assets.items():
             if key.lower() in _NON_DATA_KEYS or _NON_DATA_ROLES.intersection(a.roles):
                 continue
-            return a
+            return key
         return None
+
+    def data_asset(self) -> Optional[Asset]:
+        key = self.data_asset_key()
+        return self.assets[key] if key is not None else None
 
     def thumbnail_asset(self) -> Optional[Asset]:
         if "thumbnail" in self.assets:

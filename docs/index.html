@@ -231,6 +231,7 @@
     <a href="#lidar-actions">LiDAR actions</a>
     <a href="#clip">Clip to area of interest</a>
     <a href="#known-issues">Known issues</a>
+    <a href="#feedback">Help &amp; feedback</a>
     <a href="#origins">Where this came from</a>
   </nav>
 
@@ -318,7 +319,11 @@
     </ul>
     <p>Other APIs implement STAC differently, so thumbnails, adding to the map, or downloads may not work for
       every one. Assets on <code>s3://</code> URLs (e.g. NAIP on Earth Search, which is requester-pays) can't be
-      read without AWS credentials. The <strong>server mosaic</strong> only covers KyFromAbove tiles.</p>
+      read without AWS credentials. The built-in <strong>server mosaic</strong> only covers KyFromAbove tiles. To make one from another source,
+      give it a <a href="https://github.com/stac-utils/titiler-pgstac" target="_blank" rel="noopener">titiler-pgstac</a>
+      server that serves that API&rsquo;s catalog: click <strong>Add as server mosaic</strong> and QGIS asks for the server URL
+      (remembered per source), or set it under <strong>Sources... &rarr; Tile server...</strong>. It must be a titiler-pgstac
+      instance connected to the same catalog as the API; a plain titiler can&rsquo;t register a search over specific tiles.</p>
   </section>
 
   <section id="results">
@@ -393,6 +398,14 @@
       not a page), then either use the dialog's own <strong>Install &hellip; from Folder</strong> button, or
       drop it into your OSGeo4W install's PROJ data directory (<code>%OSGEO4W_ROOT%\share\proj\</code>) so
       it's available to every tool using that PROJ install, not just QGIS.</p>
+  </section>
+
+  <section id="feedback">
+    <h2>Help &amp; feedback</h2>
+    <p><strong>Help</strong> (top of the dock) opens this page. <strong>Feedback</strong> offers two ways to reach the developer:
+      <strong>Report an Issue on GitHub</strong> opens a pre-filled issue in your browser (needs a free GitHub account; public), or
+      <strong>Send Feedback Directly</strong> sends a private message with no account needed. Your email is optional, only if you want a reply.
+      Both attach the plugin, QGIS and operating system versions automatically.</p>
   </section>
 
   <section id="origins">

@@ -14,6 +14,7 @@ from qgis.PyQt.QtWidgets import (
     QDialogButtonBox,
     QFormLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -22,13 +23,21 @@ from qgis.PyQt.QtWidgets import (
     QVBoxLayout,
 )
 
-from .sources import BUILTIN_ENTRY, ApiSource, CatalogEntry, add_source, is_valid_api_url, normalize_url
+from .sources import (
+    BUILTIN_ENTRY,
+    ApiSource,
+    CatalogEntry,
+    add_source,
+    is_valid_api_url,
+    normalize_url,
+    with_tiler_url,
+)
 from .tasks import StacIndexTask
 
 _WARNING = (
     "<b>Experimental.</b> Other STAC APIs implement the spec differently, so results, thumbnails "
-    "or downloads from them may behave differently or fail. Kentucky-specific features (the server "
-    "mosaic) only apply to KyFromAbove tiles."
+    "or downloads from them may behave differently or fail. The server mosaic only works for another "
+    "API if you give it a titiler-pgstac server that serves that API's catalog."
 )
 
 
@@ -53,9 +62,18 @@ class SourcesDialog(QDialog):
         self.remove_button = QPushButton("Remove")
         self.remove_button.setToolTip("Remove the selected source (the built-in KyFromAbove catalog can't be removed)")
         self.remove_button.clicked.connect(self._remove_selected)
+        self.tiler_button = QPushButton("Tile server...")
+        self.tiler_button.setToolTip(
+            "Set the titiler-pgstac server used for \"Add as server mosaic\" with the selected source's tiles"
+        )
+        self.tiler_button.clicked.connect(self._edit_tiler)
+        side_buttons = QVBoxLayout()
+        side_buttons.addWidget(self.tiler_button)
+        side_buttons.addWidget(self.remove_button)
+        side_buttons.addStretch(1)
         active_row = QHBoxLayout()
         active_row.addWidget(self.source_list, 1)
-        active_row.addWidget(self.remove_button, 0, Qt.AlignmentFlag.AlignTop)
+        active_row.addLayout(side_buttons)
 
         self.catalog_combo = QComboBox()
         self.catalog_combo.setEnabled(False)
@@ -70,10 +88,14 @@ class SourcesDialog(QDialog):
         self.error_label.setWordWrap(True)
         self.error_label.setVisible(False)
 
+        self.tiler_edit = QLineEdit()
+        self.tiler_edit.setPlaceholderText("Optional: titiler-pgstac server for \"Add as server mosaic\"")
+
         form = QFormLayout()
         form.addRow("STAC Index", self.catalog_combo)
         form.addRow("Name", self.name_edit)
         form.addRow("API base URL", self.url_edit)
+        form.addRow("Tile server", self.tiler_edit)
 
         self.add_button = QPushButton("Add")
         self.add_button.setToolTip("Keep the current source(s) and search this one alongside them")
@@ -115,6 +137,8 @@ class SourcesDialog(QDialog):
         self.source_list.clear()
         for s in self._sources:
             label = f"{s.name}  (built-in)" if s.is_default else s.name
+            if s.tiler_url:
+                label += "  (tile server set)"
             item = QListWidgetItem(label)
             item.setToolTip(s.base_uri)
             self.source_list.addItem(item)
@@ -122,13 +146,38 @@ class SourcesDialog(QDialog):
 
     def _update_remove_enabled(self, *_):
         row = self.source_list.currentRow()
-        self.remove_button.setEnabled(0 <= row < len(self._sources) and not self._sources[row].is_default)
+        editable = 0 <= row < len(self._sources) and not self._sources[row].is_default
+        self.remove_button.setEnabled(editable)
+        self.tiler_button.setEnabled(editable)
 
     def _remove_selected(self):
         row = self.source_list.currentRow()
         if 0 <= row < len(self._sources) and not self._sources[row].is_default:
             del self._sources[row]
             self._refresh_list()
+
+    def _edit_tiler(self):
+        row = self.source_list.currentRow()
+        if not (0 <= row < len(self._sources)) or self._sources[row].is_default:
+            return
+        source = self._sources[row]
+        text, ok = QInputDialog.getText(
+            self,
+            "Tile server",
+            f"Base URL of a titiler-pgstac server that serves {source.name}'s catalog (blank to clear):",
+            text=source.tiler_url,
+        )
+        url = normalize_url(text)
+        if not ok:
+            return
+        if url and not is_valid_api_url(url):
+            self.error_label.setText("Enter a valid http(s):// URL for the tile server.")
+            self.error_label.setVisible(True)
+            return
+        self.error_label.setVisible(False)
+        self._sources = with_tiler_url(self._sources, source.base_uri, url)
+        self._refresh_list()
+        self.source_list.setCurrentRow(row)
 
     # ---- STAC Index ------------------------------------------------------------------------
 
@@ -165,8 +214,13 @@ class SourcesDialog(QDialog):
             self.error_label.setText("Enter a valid http(s):// URL for the STAC API base.")
             self.error_label.setVisible(True)
             return
+        tiler = normalize_url(self.tiler_edit.text())
+        if tiler and not is_valid_api_url(tiler):
+            self.error_label.setText("Enter a valid http(s):// URL for the tile server, or leave it blank.")
+            self.error_label.setVisible(True)
+            return
         before = len(self._sources)
-        self._sources = add_source(self._sources, self.name_edit.text(), url, replace)
+        self._sources = add_source(self._sources, self.name_edit.text(), url, replace, tiler)
         if not replace and len(self._sources) == before:
             self.error_label.setText("That source is already active.")
             self.error_label.setVisible(True)
@@ -174,6 +228,7 @@ class SourcesDialog(QDialog):
         self.error_label.setVisible(False)
         self.name_edit.clear()
         self.url_edit.clear()
+        self.tiler_edit.clear()
         self.catalog_combo.setCurrentIndex(0)
         self._refresh_list()
 

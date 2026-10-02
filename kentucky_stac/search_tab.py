@@ -20,6 +20,7 @@ from qgis.PyQt.QtWidgets import (
     QCheckBox,
     QFileDialog,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QListWidget,
     QListWidgetItem,
@@ -49,8 +50,8 @@ from .mosaic import BuildMosaicsTask, plan_mosaics
 from .mosaicjson import native_gsd, plan_mosaicjson, write_mosaicjson
 from .pdal_clip import CropPointCloudsTask, clipped_path
 from .results_layer import select_results, show_results
-from .server_layers import RegisterMosaicsTask, add_search_layer, plan_server_mosaics
-from .sources import DEFAULT_SOURCE, ApiSource, is_default_uri, source_name
+from .server_layers import RegisterMosaicsTask, add_search_layer, plan_server_mosaics, tiler_url
+from .sources import DEFAULT_SOURCE, ApiSource, is_default_uri, is_valid_api_url, normalize_url, source_name, tiler_for, with_tiler_url
 from .stac import Collection, Item, SearchQuery
 from .tasks import PAGE_SIZE, SearchTask
 from .vpc import build_vpc
@@ -197,6 +198,7 @@ class SearchTab(QWidget):
     """Pick collection(s), search the current AOI, and list the matching tiles."""
 
     reload_requested = pyqtSignal()
+    sources_changed = pyqtSignal(list)  # the source list with a tile server URL newly set
 
     def __init__(self, what: str, kind: str, lidar: bool, aoi_state: AoiState, message_bar=None, parent=None):
         super().__init__(parent)
@@ -436,6 +438,27 @@ class SearchTab(QWidget):
 
     def set_sources(self, sources: List[ApiSource]):
         self._sources = list(sources)
+
+    def _ask_tiler_url(self, base_uri: str) -> bool:
+        """Ask for the titiler-pgstac server to use for a source's server mosaic, and remember it.
+        Returns False if the user cancelled or left it blank."""
+        name = source_name(self._sources, base_uri)
+        text, ok = QInputDialog.getText(
+            self,
+            "Tile server",
+            f"The built-in server mosaic only covers KyFromAbove. To make one from {name}, enter the base URL "
+            "of a titiler-pgstac server that serves this API's catalog:",
+            text="https://",
+        )
+        url = normalize_url(text)
+        if not ok or url in ("", "https:", "http:"):
+            return False
+        if not is_valid_api_url(url):
+            self._warn("That isn't a valid http(s):// URL.")
+            return False
+        self._sources = with_tiler_url(self._sources, base_uri, url)
+        self.sources_changed.emit(list(self._sources))
+        return True
 
     def _source_label(self, base_uri: str) -> str:
         """A source's display name, or "" for the built-in catalog (left unlabeled, as before)."""
@@ -917,19 +940,27 @@ class SearchTab(QWidget):
     def add_server_mosaic(self):
         if self._busy():
             return
-        selected = self.selected_items()
-        # The tile server only holds KyFromAbove's collections -- another source's tiles can't be
-        # registered there.
-        items = [i for i in selected if is_default_uri(i.source)]
-        skipped = len(selected) - len(items)
-        self._server_mosaic_note = (
-            f"{skipped} tile{'s' if skipped != 1 else ''} from another source left out (the server mosaic "
-            "only covers KyFromAbove)" if skipped else ""
+        items = self.selected_items()
+        # The built-in tile server only holds KyFromAbove's collections, so another source's tiles
+        # need a titiler-pgstac server of the user's own, backed by that API's catalog -- asked for
+        # once per source and remembered.
+        self._server_mosaic_note = ""
+        skipped = 0
+        for uri in sorted({i.source for i in items if not is_default_uri(i.source)}):
+            if not tiler_for(self._sources, uri) and not self._ask_tiler_url(uri):
+                skipped += sum(1 for i in items if i.source == uri)
+        if skipped:
+            self._server_mosaic_note = (
+                f"{skipped} tile{'s' if skipped != 1 else ''} left out (no tile server set for their source)"
+            )
+        groups = plan_server_mosaics(
+            items,
+            lambda uri: tiler_url() if is_default_uri(uri) else tiler_for(self._sources, uri),
+            lambda uri: source_name(self._sources, uri),
         )
-        groups = plan_server_mosaics(items)
         if not groups:
             self._info(
-                "Nothing to register: the server mosaic only covers KyFromAbove tiles."
+                "Nothing to register: no tile server is set for the selected tiles' source."
                 if skipped
                 else "Nothing to register: the selected tiles have no usable collection."
             )
@@ -944,7 +975,7 @@ class SearchTab(QWidget):
         self.server_mosaic_button.setText("Add as server mosaic")
         added, extra_notes = 0, []
         for group, search_id, style in built:
-            layer, message = add_search_layer(search_id, group.collection_id, style, len(group.ids))
+            layer, message = add_search_layer(search_id, group, style)
             if layer is not None:
                 added += 1
             elif "already" not in message:
