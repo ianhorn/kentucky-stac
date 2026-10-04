@@ -229,6 +229,7 @@
     <a href="#results">Results list</a>
     <a href="#imagery-actions">Imagery / DEM actions</a>
     <a href="#lidar-actions">LiDAR actions</a>
+    <a href="#export-script">Export as script</a>
     <a href="#clip">Clip to area of interest</a>
     <a href="#known-issues">Known issues</a>
     <a href="#feedback">Help &amp; feedback</a>
@@ -250,6 +251,7 @@
       <span class="pill">Virtual Point Cloud export</span>
       <span class="pill">GDAL VRT mosaics</span>
       <span class="pill">MosaicJSON export</span>
+      <span class="pill">Download scripts</span>
       <span class="pill">titiler-pgstac mosaics</span>
       <span class="pill">PDAL AOI clipping</span>
     </div>
@@ -302,7 +304,8 @@
     </ul>
     <h3>Filters</h3>
     <p>The collapsed <strong>Filters</strong> section above the search button narrows a search; its header shows how many
-      are active, and <strong>Reset filters</strong> clears them all.</p>
+      are active, and <strong>Reset filters</strong> clears them all. <strong>Sort</strong> and <strong>Max tiles</strong>
+      sit on the same row as the Filters header, so they are always visible.</p>
     <ul>
       <li><strong>From / To</strong> &mdash; only tiles captured in that date range (the end day is included).</li>
       <li><strong>Max cloud cover</strong> &mdash; imagery tabs only. Tiles that report no cloud cover (radar, elevation,
@@ -333,7 +336,9 @@
     </ul>
     <p>Other APIs implement STAC differently, so thumbnails, adding to the map, or downloads may not work for
       every one. Files at <code>s3://</code> addresses (common outside KyFromAbove) are handled for you:
-      public ones are downloaded and streamed through their https address. Private and requester-pays buckets
+      public ones are downloaded and streamed through their https address. Files on Azure Blob Storage, which is
+      how Microsoft Planetary Computer serves its assets, are signed automatically with a free SAS token from the
+      Planetary Computer&rsquo;s token service (cached until shortly before it expires). Private and requester-pays buckets
       (e.g. NAIP on Earth Search) need your own AWS credentials, set as the <code>AWS_ACCESS_KEY_ID</code> /
       <code>AWS_SECRET_ACCESS_KEY</code> environment variables or in <code>~/.aws/credentials</code>
       (restart QGIS after setting them). With credentials found, files are read through GDAL&rsquo;s signed S3
@@ -379,6 +384,7 @@
       <div class="card"><h4>Export VRT</h4><p>Stitches the selected tiles into a GDAL virtual raster, one per collection, and adds it to the map.</p></div>
       <div class="card"><h4>Export as MosaicJSON&hellip;</h4><p>Writes a <a href="https://github.com/developmentseed/mosaicjson-spec" target="_blank" rel="noopener">MosaicJSON</a> file per collection &mdash; a portable index that titiler, rio-tiler or cogeo-mosaic can read directly, with no GDAL or server round trip involved.</p></div>
       <div class="card"><h4>Add as server mosaic</h4><p>Registers a titiler-pgstac search restricted to the selected tiles and streams it &mdash; a precise crop of the statewide mosaic, with no download or local stitching.</p></div>
+      <div class="card"><h4>Export as script&hellip;</h4><p>Saves a Jupyter notebook, Python script or shell script that downloads the selected tiles outside QGIS. See <a href="#export-script">Export as script</a>.</p></div>
     </div>
   </section>
 
@@ -388,9 +394,37 @@
       <div class="card"><h4>Add selected to map</h4><p>Streams selected COPC tiles directly. Plain LAZ/LAS tiles (Phase 1) can't be streamed this way &mdash; download them instead.</p></div>
       <div class="card"><h4>Download selected&hellip;</h4><p>Downloads the selected point cloud tiles to a folder you choose.</p></div>
       <div class="card"><h4>Add selected as Virtual Point Cloud</h4><p>Combines the selected COPC tiles into one Virtual Point Cloud (<code>.vpc</code>) layer, streamed directly from their remote URLs &mdash; no download, no local file beyond the small index itself.</p></div>
+      <div class="card"><h4>Export as script&hellip;</h4><p>Saves a Jupyter notebook, Python script or shell script that downloads the selected tiles outside QGIS. See <a href="#export-script">Export as script</a>.</p></div>
     </div>
     <p><strong>Add downloaded files to the map</strong> (unchecked by default) adds files after a download
       completes; two or more LiDAR tiles are combined into one Virtual Point Cloud layer automatically.</p>
+    <h3>Virtual point cloud options</h3>
+    <p>With <strong>Add downloaded files to the map</strong> ticked and two or more tiles selected, clicking
+      <strong>Download selected&hellip;</strong> first asks for the options of QGIS&rsquo;s
+      <em>Build virtual point cloud</em> algorithm. They are remembered between sessions:</p>
+    <ul>
+      <li><strong>Calculate boundary polygons</strong> &mdash; store each tile&rsquo;s exact data outline, not just its rectangle.</li>
+      <li><strong>Calculate statistics</strong> &mdash; store the range of each attribute so styling works straight away.</li>
+      <li><strong>Build overview point cloud</strong> &mdash; also write a thinned overview (every 1000th point) next to the <code>.vpc</code>.</li>
+    </ul>
+    <p>With all three unchecked (the default) the index is built instantly from the catalog&rsquo;s metadata. Any
+      option makes QGIS read every point of every tile in the background, which takes longer. The options are not
+      offered for <strong>Add selected as Virtual Point Cloud</strong>, which streams: the algorithm has to read
+      every point, and it never finished over https.</p>
+  </section>
+
+  <section id="export-script">
+    <h2>Export as script</h2>
+    <p class="lede">Both tabs have an <strong>Export as script&hellip;</strong> button. Select tiles, click it, pick a format,
+      and choose where to save. The script downloads those tiles&rsquo; main files (the COG, or the COPC/LAZ file) outside QGIS.</p>
+    <ul>
+      <li><strong>Jupyter notebook (.ipynb)</strong> &mdash; separate cells for settings, the tile list, the helper functions and the download.</li>
+      <li><strong>Python script (.py)</strong> &mdash; standard library only. Set <code>DEST</code> and <code>WORKERS</code> at the top.</li>
+      <li><strong>Shell script (.sh)</strong> &mdash; bash and curl. Usage: <code>./download_tiles.sh [folder]</code>; <code>JOBS=8</code> sets how many download at once.</li>
+    </ul>
+    <p>All three skip files that already exist, turn <code>s3://</code> addresses into https, and fetch a Planetary Computer
+      SAS token when they run for Azure files (a token expires within the hour, so it can&rsquo;t be saved in the script).
+      Files that aren&rsquo;t public, such as a private S3 bucket, need their own credentials, which the scripts don&rsquo;t handle.</p>
   </section>
 
   <section id="clip">
