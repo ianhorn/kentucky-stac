@@ -24,7 +24,7 @@ from qgis.core import (
     QgsTask,
 )
 
-from . import s3
+from . import s3, signing
 from .catalog import DEFAULT_CRS, primary_asset
 from .gdal_setup import setup_gdal
 from .stac import Item
@@ -60,9 +60,9 @@ def raster_uri(href: str) -> str:
                 gdal.SetConfigOption("AWS_REQUEST_PAYER", "requester")
                 _payer_set = True
             return s3.vsis3_path(href)
-        href = s3.to_https(href)  # a public bucket
+    href = signing.fetchable_url(href)  # s3:// -> https (a public bucket); Azure blob -> signed
     # list_dir=no stops GDAL from probing the "directory" around each tile (several extra requests).
-    return f"/vsicurl?list_dir=no&url={href}"
+    return f"/vsicurl?list_dir=no&url={href.replace(chr(38), '%26')}"  # a SAS token holds &s that would end the url option
 
 
 def layer_specs(items: Iterable[Item], lidar: bool) -> Tuple[List[LayerSpec], List[Item]]:
@@ -77,7 +77,7 @@ def layer_specs(items: Iterable[Item], lidar: bool) -> Tuple[List[LayerSpec], Li
             skipped.append(item)
         elif lidar:
             if asset.is_copc:
-                specs.append(LayerSpec(item.id, s3.to_https(asset.href), "copc", bbox))
+                specs.append(LayerSpec(item.id, signing.fetchable_url(asset.href), "copc", bbox))
             else:
                 skipped.append(item)
         else:

@@ -3,7 +3,7 @@ HTTPS-inspecting antivirus).
 
 A tile whose URL is s3://... is read as its public https address, or -- when AWS credentials are
 configured (see s3.py) -- through GDAL's /vsis3/, which signs the request and so also reaches private and
-requester-pays buckets."""
+requester-pays buckets. An Azure blob URL (Planetary Computer) gets a free SAS token attached (signing.py)."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from qgis.core import QgsApplication, QgsBlockingNetworkRequest, QgsFileDownload
 from qgis.PyQt.QtCore import QObject, QTimer, QUrl, pyqtSignal
 from qgis.PyQt.QtNetwork import QNetworkRequest
 
-from . import s3
+from . import s3, signing
 from .catalog import primary_asset
 from .gdal_setup import setup_gdal
 from .stac import Item
@@ -99,13 +99,12 @@ def _signed_size(url: str) -> Optional[int]:
 
 def head_size(url: str) -> Optional[int]:
     """Content-Length from a HEAD request, or None. Safe to call from worker threads."""
-    if s3.is_s3(url):
-        if s3.credentials_available():
-            try:
-                return _signed_size(url)
-            except Exception:
-                return None
-        url = s3.to_https(url)
+    if s3.is_s3(url) and s3.credentials_available():
+        try:
+            return _signed_size(url)
+        except Exception:
+            return None
+    url = signing.fetchable_url(url)  # s3:// -> https, Azure blob -> signed
     try:
         blocking = QgsBlockingNetworkRequest()
         error = blocking.head(QNetworkRequest(QUrl(url)))
@@ -263,7 +262,7 @@ class DownloadManager(QObject):
         if s3.is_s3(job.url) and s3.credentials_available():
             self._start_signed(state, part)
             return
-        downloader = QgsFileDownloader(QUrl(s3.to_https(job.url)), part, "", True)
+        downloader = QgsFileDownloader(QUrl(signing.fetchable_url(job.url)), part, "", True)
         # The manager owns the downloader (Qt parent) and keeps the Python wrapper alive. Letting the
         # wrapper be garbage-collected from inside the downloader's own downloadExited signal frees
         # the C++ object mid-emit and crashes QGIS.
