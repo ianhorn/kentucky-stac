@@ -209,11 +209,12 @@
     <div class="hero-badges">
       <span class="badge">QGIS 3.44 LTR (OSGeo4W)</span>
       <span class="badge">GPL-2.0-or-later</span>
-      <span class="badge">Private repo</span>
+      <span class="badge">Open source</span>
     </div>
     <div class="hero-links">
       <a class="btn btn-light" href="#installation">Get started</a>
       <a class="btn btn-outline" href="#features">See what it does</a>
+      <a class="btn btn-outline" href="https://github.com/ianhorn/kentucky-stac" target="_blank" rel="noopener">View on GitHub</a>
     </div>
   </div>
 </header>
@@ -268,6 +269,9 @@
       <li>PDAL, bundled with OSGeo4W, is required for point cloud AOI clipping and is already on <code>PATH</code> inside a normal OSGeo4W install.</li>
     </ul>
     <h3>Install the plugin</h3>
+    <p>The source is on GitHub at
+      <a href="https://github.com/ianhorn/kentucky-stac" target="_blank" rel="noopener">ianhorn/kentucky-stac</a>
+      (<code>git clone https://github.com/ianhorn/kentucky-stac.git</code>); the plugin is the <code>kentucky_stac/</code> folder.</p>
     <p>Copy (or symlink/junction, for development) the <code>kentucky_stac/</code> folder into your QGIS
       profile's plugin directory:</p>
     <pre><code>%APPDATA%\QGIS\QGIS3\profiles\default\python\plugins\kentucky_stac</code></pre>
@@ -476,6 +480,12 @@
       <a href="https://kyfromabove.ky.gov/" target="_blank" rel="noopener">Kentucky From Above</a> catalog
       &mdash; one for imagery/elevation, one for LiDAR &mdash; into a single cross-platform QGIS plugin with
       one shared area-of-interest workflow instead of two separate tools.</p>
+    <p>The originals are
+      <a href="https://github.com/ianhorn/kyfromabove-stac-addin" target="_blank" rel="noopener">kyfromabove-stac-addin</a>
+      (imagery &amp; elevation) and
+      <a href="https://github.com/ianhorn/kylidar-addin" target="_blank" rel="noopener">kylidar-addin</a> (LiDAR);
+      this plugin lives at
+      <a href="https://github.com/ianhorn/kentucky-stac" target="_blank" rel="noopener">ianhorn/kentucky-stac</a>.</p>
     <p>Licensed <a href="https://www.gnu.org/licenses/old-licenses/gpl-2.0.html" target="_blank" rel="noopener">GPL-2.0-or-later</a>.</p>
   </section>
 
@@ -483,7 +493,8 @@
 </div>
 
 <footer>
-  Kentucky STAC &middot; QGIS plugin for the Kentucky From Above STAC catalog
+  Kentucky STAC &middot; QGIS plugin for the Kentucky From Above STAC catalog &middot;
+  <a href="https://github.com/ianhorn/kentucky-stac" target="_blank" rel="noopener">GitHub</a>
 </footer>
 
 <script>
