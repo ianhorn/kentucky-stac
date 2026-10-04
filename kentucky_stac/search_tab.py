@@ -60,6 +60,7 @@ from .sources import DEFAULT_SOURCE, ORIGINAL_TITILER_URL, ApiSource, is_default
 from .stac import Collection, Item, SearchQuery
 from .tasks import PAGE_SIZE, SearchTask
 from .vpc import build_vpc
+from .vpc_options import VpcOptions, VpcOptionsDialog, start_build
 
 _COLUMNS = ["", "Tile", "Preview"]
 _CHECKBOX_COLUMN = 0
@@ -220,6 +221,8 @@ class SearchTab(QWidget):
         self._size_task: Optional[SizesTask] = None
         self._mosaic_task: Optional[BuildMosaicsTask] = None
         self._register_task: Optional[RegisterMosaicsTask] = None
+        self._vpc_task = None  # QGIS's Build virtual point cloud algorithm, when options were chosen
+        self._vpc_options = VpcOptions()  # chosen when a download that will combine into a VPC starts
         self._download: Optional[DownloadManager] = None
         self._clip_task: Optional[CropPointCloudsTask] = None
         self._clip_sources: dict = {}  # cropped path -> the original downloaded path it came from
@@ -746,6 +749,7 @@ class SearchTab(QWidget):
                 self._register_task,
                 self._download,
                 self._clip_task,
+                self._vpc_task,
             )
         )
 
@@ -834,6 +838,9 @@ class SearchTab(QWidget):
         if len(entries) < 2:
             self._info("Select two or more streamable (COPC) tiles to combine into a virtual point cloud.")
             return
+        # No options here: QGIS's Build virtual point cloud algorithm has to read every point, and over
+        # https it never finished (tested), so the options are offered on the download path only.
+        options = VpcOptions()
         settings = QgsSettings()
         folder = QFileDialog.getExistingDirectory(
             self, "Save the virtual point cloud (.vpc) to", str(settings.value("kentucky_stac/vpc_dir", "") or "")
@@ -843,15 +850,37 @@ class SearchTab(QWidget):
         settings.setValue("kentucky_stac/vpc_dir", folder)
 
         vpc_path = os.path.join(folder, f"kentucky_stac_pointcloud_{datetime.now().strftime('%H%M%S')}.vpc")
-        count = build_vpc(entries, vpc_path)
-        if count < 2:
-            self._warn("Could not build a combined virtual point cloud (missing tile footprints); nothing added.")
-            return
-        bbox = union_bbox([b for b in (item_bbox(e[0]) for e in entries) if b is not None])
-        spec = LayerSpec(f"Ky STAC point cloud ({count} tiles)", vpc_path, "vpc", bbox)
         notes = [f"streamed directly (no download), saved to {os.path.basename(vpc_path)}"]
         if skipped:
             notes.append(f"{skipped} tile{'s' if skipped != 1 else ''} plain LAZ/LAS, which QGIS can't stream; left out")
+        self._make_vpc(entries, vpc_path, options, notes)
+
+    def _make_vpc(self, entries, vpc_path: str, options: VpcOptions, notes: List[str]):
+        """Write the .vpc for `entries` ((item, local path or url) pairs) and add it to the map. With no
+        options it's built from the STAC metadata at once; with any, QGIS's own algorithm runs in the
+        background (it reads every point) and the layer is added when it finishes."""
+        bbox = union_bbox([b for b in (item_bbox(e[0]) for e in entries) if b is not None])
+        if not options.any:
+            count = build_vpc(entries, vpc_path)
+            if count < 2:
+                self._warn("Could not build a combined virtual point cloud (missing tile footprints); nothing added.")
+                return
+            self._run_add([LayerSpec(f"Ky STAC point cloud ({count} tiles)", vpc_path, "vpc", bbox)], notes)
+            return
+        spec = LayerSpec(f"Ky STAC point cloud ({len(entries)} tiles)", vpc_path, "vpc", bbox)
+        self.results_status.setText("Building the virtual point cloud (reading every point)...")
+        self._vpc_task = start_build(
+            [e[1] for e in entries], vpc_path, options, lambda ok, message: self._on_vpc_built(ok, message, spec, notes)
+        )
+        self._update_add_enabled()
+
+    def _on_vpc_built(self, ok: bool, message: str, spec: LayerSpec, notes: List[str]):
+        self._vpc_task = None
+        self.results_status.setText(self._results_message or "")
+        self._update_add_enabled()
+        if not ok:
+            self._warn(f"Could not build the virtual point cloud: {message}")
+            return
         self._run_add([spec], notes)
 
     # ---- mosaic ---------------------------------------------------------------------------
@@ -1049,6 +1078,14 @@ class SearchTab(QWidget):
         items = self.selected_items()
         if not items:
             return
+        # Downloaded point clouds are combined into a virtual point cloud when that box is ticked,
+        # so ask for its options now rather than interrupting once the downloads finish.
+        self._vpc_options = VpcOptions()
+        if self._lidar and self.add_when_done.isChecked() and len(items) >= 2:
+            options = VpcOptionsDialog.ask(self)
+            if options is None:
+                return
+            self._vpc_options = options
         settings = QgsSettings()
         folder = QFileDialog.getExistingDirectory(
             self, "Download tiles to", str(settings.value("kentucky_stac/download_dir", "") or "")
@@ -1226,14 +1263,8 @@ class SearchTab(QWidget):
             return
         folder = os.path.dirname(paths[0])
         vpc_path = os.path.join(folder, f"kentucky_stac_pointcloud_{datetime.now().strftime('%H%M%S')}.vpc")
-        count = build_vpc(entries, vpc_path)
-        if count < 2:
-            self._warn("Could not build a combined virtual point cloud (missing tile footprints); nothing added.")
-            return
-        bbox = union_bbox([b for b in (item_bbox(e[0]) for e in entries) if b is not None])
-        spec = LayerSpec(f"Ky STAC point cloud ({count} tiles)", vpc_path, "vpc", bbox)
         notes.append(f"combined into one virtual point cloud ({os.path.basename(vpc_path)})")
-        self._run_add([spec], notes)
+        self._make_vpc(entries, vpc_path, self._vpc_options, notes)
 
     def _show_sizes(self, sizes: Dict[str, Optional[int]]):
         for row, item in enumerate(self._items):
