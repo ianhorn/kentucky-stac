@@ -22,7 +22,7 @@ KINDS = {  # kind -> (menu label, file extension, file dialog filter)
     "shell": ("Shell script (.sh)", ".sh", "Shell script (*.sh)"),
 }
 
-_PY_SETUP = '''import concurrent.futures
+_PY_CONFIG = '''import concurrent.futures
 import json
 import os
 import shutil
@@ -32,8 +32,9 @@ import urllib.request
 # Where the files go, and how many download at once.
 DEST = "tiles"
 WORKERS = 4
+'''
 
-# (file name, url) of each tile.
+_PY_TILES = '''# (file name, url) of each tile.
 TILES = @ENTRIES@
 '''
 
@@ -81,7 +82,8 @@ _PY_RUN = '''def download_all():
 
 
 def _entries_literal(entries: List[Entry]) -> str:
-    return json.dumps([list(e) for e in entries], indent=4)
+    rows = "".join(f"    ({json.dumps(name)}, {json.dumps(url)}),\n" for name, url in entries)
+    return f"[\n{rows}]"
 
 
 def entries_for(pairs: Iterable[Entry]) -> List[Entry]:
@@ -102,7 +104,9 @@ def python_script(entries: List[Entry]) -> str:
     return (
         f'"""{_header(entries)}\n\nStandard library only. A file that is not public (e.g. a private S3 bucket) needs its own '
         'credentials,\nwhich this script does not handle."""\n\n'
-        + _PY_SETUP.replace("@ENTRIES@", _entries_literal(entries))
+        + _PY_CONFIG
+        + "\n"
+        + _PY_TILES.replace("@ENTRIES@", _entries_literal(entries))
         + "\n\n"
         + _PY_HELPERS
         + "\n\n"
@@ -119,7 +123,8 @@ def notebook(entries: List[Entry]) -> str:
 
     cells = [
         cell("markdown", f"# Kentucky STAC tiles\n\n{_header(entries)} Run the cells in order; standard library only."),
-        cell("code", _PY_SETUP.replace("@ENTRIES@", _entries_literal(entries))),
+        cell("code", _PY_CONFIG),
+        cell("code", _PY_TILES.replace("@ENTRIES@", _entries_literal(entries))),
         cell("code", _PY_HELPERS),
         cell("code", _PY_RUN + "\n\ndownload_all()"),
     ]
