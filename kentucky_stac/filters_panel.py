@@ -90,10 +90,6 @@ class FiltersPanel(QWidget):
         else:
             self.cloud_check.setVisible(False)
             self.cloud_spin.setVisible(False)
-        grid.addWidget(_label("Sort"), 3, 0)
-        grid.addWidget(self.sort_combo, 3, 1)
-        grid.addWidget(_label("Max tiles"), 4, 0)
-        grid.addWidget(self.max_spin, 4, 1)
         grid.setColumnStretch(2, 1)
         reset_row = QHBoxLayout()
         reset_row.setContentsMargins(16, 0, 0, 0)
@@ -109,7 +105,15 @@ class FiltersPanel(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.header)
+        top_row = QHBoxLayout()
+        top_row.setContentsMargins(0, 0, 0, 0)
+        top_row.addWidget(self.header)
+        top_row.addStretch(1)
+        top_row.addWidget(_label("Sort"))
+        top_row.addWidget(self.sort_combo)
+        top_row.addWidget(_label("Max tiles"))
+        top_row.addWidget(self.max_spin)
+        layout.addLayout(top_row)
         layout.addWidget(self.body)
 
         for signal in (
@@ -131,8 +135,6 @@ class FiltersPanel(QWidget):
             int(self.from_check.isChecked())
             + int(self.to_check.isChecked())
             + int(self.cloud_check.isChecked() and self.cloud_check.isVisibleTo(self))
-            + int(self.sort_combo.currentIndex() != 0)
-            + int(self.max_spin.value() != DEFAULT_MAX_TILES)
         )
 
     def _refresh_header(self):
