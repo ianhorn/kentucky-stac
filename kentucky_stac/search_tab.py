@@ -54,8 +54,7 @@ from .mosaicjson import native_gsd, plan_mosaicjson, write_mosaicjson
 from .pdal_clip import CropPointCloudsTask, clipped_path
 from .results_layer import select_results, show_results
 from .server_layers import RegisterMosaicsTask, add_cog_layers, add_search_layer, plan_server_mosaics, tiler_url
-from .sources import DEFAULT_SOURCE, ApiSource, is_default_uri, source_name, tiler_for, with_tiler_url
-from .sources_dialog import TilerUrlDialog
+from .sources import DEFAULT_SOURCE, ORIGINAL_TITILER_URL, ApiSource, is_default_uri, source_name, tiler_for
 from .stac import Collection, Item, SearchQuery
 from .tasks import PAGE_SIZE, SearchTask
 from .vpc import build_vpc
@@ -447,16 +446,6 @@ class SearchTab(QWidget):
 
     def set_sources(self, sources: List[ApiSource]):
         self._sources = list(sources)
-
-    def _ask_tiler_url(self, base_uri: str) -> bool:
-        """Ask for the titiler-pgstac server to use for a source's server mosaic, and remember it.
-        Returns False if the user cancelled or left it blank."""
-        url = TilerUrlDialog.ask(source_name(self._sources, base_uri), "", self)
-        if not url:
-            return False
-        self._sources = with_tiler_url(self._sources, base_uri, url)
-        self.sources_changed.emit(list(self._sources))
-        return True
 
     def _source_label(self, base_uri: str) -> str:
         """A source's display name, or "" for the built-in catalog (left unlabeled, as before)."""
@@ -956,29 +945,16 @@ class SearchTab(QWidget):
         if self._busy():
             return
         items = self.selected_items()
-        # The built-in tile server only holds KyFromAbove's collections, so another source's tiles
-        # need a titiler-pgstac server of the user's own, backed by that API's catalog -- asked for
-        # once per source and remembered.
+        # KyFromAbove's tiles use its titiler-pgstac server. Another source's tiles use that source's own
+        # titiler if one was set (Sources... > Tile server...), else KyFromAbove's plain titiler.
         self._server_mosaic_note = ""
-        skipped = 0
-        for uri in sorted({i.source for i in items if not is_default_uri(i.source)}):
-            if not tiler_for(self._sources, uri) and not self._ask_tiler_url(uri):
-                skipped += sum(1 for i in items if i.source == uri)
-        if skipped:
-            self._server_mosaic_note = (
-                f"{skipped} tile{'s' if skipped != 1 else ''} left out (no tile server set for their source)"
-            )
         groups = plan_server_mosaics(
             items,
-            lambda uri: tiler_url() if is_default_uri(uri) else tiler_for(self._sources, uri),
+            lambda uri: tiler_url() if is_default_uri(uri) else tiler_for(self._sources, uri) or ORIGINAL_TITILER_URL,
             lambda uri: source_name(self._sources, uri),
         )
         if not groups:
-            self._info(
-                "Nothing to register: no tile server is set for the selected tiles' source."
-                if skipped
-                else "Nothing to register: the selected tiles have no usable collection."
-            )
+            self._info("Nothing to register: the selected tiles have no usable collection.")
             return
         self.server_mosaic_button.setText("Registering mosaic...")
         self._register_task = RegisterMosaicsTask(groups, self._on_server_mosaics_registered)

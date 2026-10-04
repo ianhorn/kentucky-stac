@@ -26,7 +26,6 @@ from qgis.PyQt.QtWidgets import (
 
 from .sources import (
     BUILTIN_ENTRY,
-    ORIGINAL_TITILER_URL,
     ApiSource,
     CatalogEntry,
     add_source,
@@ -38,15 +37,22 @@ from .tasks import StacIndexTask
 
 _WARNING = (
     "<b>Experimental.</b> Other STAC APIs implement the spec differently, so results, thumbnails "
-    "or downloads from them may behave differently or fail. The server mosaic only works for another "
-    "API if you bring your own titiler or titiler-pgstac server."
+    "or downloads from them may behave differently or fail."
+)
+
+_TILER_NOTICE = (
+    "<b>&#9888; Use your own titiler.</b> For another API, \"Add as server mosaic\" falls back to "
+    "KyFromAbove's shared plain titiler, which may be slow, rate-limited or unable to read some files. "
+    "You are encouraged to enter the base URL of your own <b>titiler</b> or <b>titiler-pgstac</b> server "
+    "below (or via <i>Tile server...</i>) for reliable results."
 )
 
 
 _TILER_INFO = (
     "<p><b>What this is.</b> \"Add as server mosaic\" streams tiles from a <b>titiler</b> server, which turns "
-    "cloud-optimized GeoTIFFs into map tiles on the fly. The built-in server only knows KyFromAbove's "
-    "collections, so for any other source you have to <b>bring your own titiler</b>.</p>"
+    "cloud-optimized GeoTIFFs into map tiles on the fly. KyFromAbove's tiles use its "
+    "titiler-pgstac server. For any other source the shared KyFromAbove plain titiler is used unless you "
+    "set <b>your own titiler</b>, which is encouraged.</p>"
     "<p><b>Two kinds work:</b></p><ul>"
     "<li><b>titiler-pgstac</b> connected to that API's catalog: one mosaic layer per collection.</li>"
     "<li><b>Plain titiler</b> (<code>/cog/tiles</code>): one layer per tile (up to 50 at a time), each reading "
@@ -55,8 +61,6 @@ _TILER_INFO = (
     "<p><b>The server must be able to read the files.</b> Public https files are fine. Files at s3:// "
     "addresses only work if your server has its own AWS access (and, for requester-pays buckets, is set "
     "up to pay).</p>"
-    "<p><b>Use KyFromAbove's titiler</b> reverts to the original KyFromAbove server. It holds KyFromAbove "
-    "data only, so it won't show tiles from another source.</p>"
     "<p><i>Experimental: servers differ, so it may not work with every one.</i></p>"
 )
 
@@ -69,9 +73,9 @@ class TilerUrlDialog(QDialog):
         self.setWindowTitle("Tile server")
         self.setMinimumWidth(480)
         warning = QLabel(
-            "<b>Experimental.</b> The built-in server mosaic only covers KyFromAbove. For "
-            f"{source_name}, enter the base URL of a titiler / titiler-pgstac server that serves this "
-            "API's catalog, or a plain titiler. Servers differ, so this may not work with every one."
+            "<b>Experimental.</b> Without a URL, "
+            f"{source_name} uses KyFromAbove's shared plain titiler. You are encouraged to enter the base URL "
+            "of your own titiler / titiler-pgstac server. Servers differ, so this may not work with every one."
         )
         warning.setWordWrap(True)
         warning.setStyleSheet(
@@ -85,9 +89,6 @@ class TilerUrlDialog(QDialog):
         self.info_button.setToolTip("How tile servers work here")
         self.info_button.setStyleSheet("QToolButton { font-weight: bold; border-radius: 8px; padding: 1px 6px; }")
         self.info_button.clicked.connect(self._show_info)
-        self.original_button = QPushButton("Use KyFromAbove's titiler")
-        self.original_button.setToolTip(f"Revert to the original: {ORIGINAL_TITILER_URL}")
-        self.original_button.clicked.connect(lambda: self.url_edit.setText(ORIGINAL_TITILER_URL))
         self.error_label = QLabel()
         self.error_label.setStyleSheet("color: #c0392b;")
         self.error_label.setVisible(False)
@@ -95,7 +96,6 @@ class TilerUrlDialog(QDialog):
         buttons.accepted.connect(self._accept)
         buttons.rejected.connect(self.reject)
         row = QHBoxLayout()
-        row.addWidget(self.original_button)
         row.addStretch(1)
         row.addWidget(buttons)
         layout = QVBoxLayout(self)
@@ -151,6 +151,13 @@ class SourcesDialog(QDialog):
             "border-radius: 4px; padding: 6px; }"
         )
 
+        tiler_notice = QLabel(_TILER_NOTICE)
+        tiler_notice.setWordWrap(True)
+        tiler_notice.setStyleSheet(
+            "QLabel { background: #fde3e0; color: #7a1d12; border: 2px solid #c0392b; "
+            "border-radius: 4px; padding: 6px; }"
+        )
+
         self.source_list = QListWidget()
         self.source_list.setMaximumHeight(100)
         self.source_list.currentRowChanged.connect(self._update_remove_enabled)
@@ -184,13 +191,13 @@ class SourcesDialog(QDialog):
         self.error_label.setVisible(False)
 
         self.tiler_edit = QLineEdit()
-        self.tiler_edit.setPlaceholderText("Optional: titiler / titiler-pgstac server for \"Add as server mosaic\"")
+        self.tiler_edit.setPlaceholderText("Your own titiler / titiler-pgstac URL (encouraged; else the shared plain titiler is used)")
 
         form = QFormLayout()
         form.addRow("STAC Index", self.catalog_combo)
         form.addRow("Name", self.name_edit)
         form.addRow("API base URL", self.url_edit)
-        form.addRow("Tile server", self.tiler_edit)
+        form.addRow("Your titiler", self.tiler_edit)
 
         self.add_button = QPushButton("Add")
         self.add_button.setToolTip("Keep the current source(s) and search this one alongside them")
@@ -209,6 +216,7 @@ class SourcesDialog(QDialog):
 
         layout = QVBoxLayout(self)
         layout.addWidget(warning)
+        layout.addWidget(tiler_notice)
         layout.addWidget(QLabel("Active sources"))
         layout.addLayout(active_row)
         layout.addWidget(QLabel("Add a source"))

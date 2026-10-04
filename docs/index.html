@@ -337,9 +337,9 @@
       (e.g. NAIP on Earth Search) need your own AWS credentials, set as the <code>AWS_ACCESS_KEY_ID</code> /
       <code>AWS_SECRET_ACCESS_KEY</code> environment variables or in <code>~/.aws/credentials</code>
       (restart QGIS after setting them). With credentials found, files are read through GDAL&rsquo;s signed S3
-      access, and for requester-pays buckets the transfer charges go to your AWS account. The built-in <strong>server mosaic</strong> only covers KyFromAbove tiles. To make one from another
-      source, <strong>bring your own titiler</strong>: click <strong>Add as server mosaic</strong> and QGIS asks for the server
-      URL (remembered per source), or set it under <strong>Sources... &rarr; Tile server...</strong>. This is <strong>experimental</strong>.
+      access, and for requester-pays buckets the transfer charges go to your AWS account. <strong>Add as server mosaic</strong> uses KyFromAbove&rsquo;s titiler-pgstac server for KyFromAbove tiles. For
+      tiles from another source it uses KyFromAbove&rsquo;s shared <strong>plain titiler</strong> unless you set your own, which is
+      encouraged: set it under <strong>Sources... &rarr; Tile server...</strong>. This is <strong>experimental</strong>.
       Two kinds of server work, and the plugin works out which yours is:</p>
     <ul>
       <li><a href="https://github.com/stac-utils/titiler-pgstac" target="_blank" rel="noopener">titiler-pgstac</a> connected
@@ -348,9 +348,7 @@
         per tile (up to 50 at a time), each reading the tile&rsquo;s own file. No catalog connection needed.</li>
     </ul>
     <p>The server must be able to read the files: public https is fine; <code>s3://</code> files need the server to have its own
-      AWS access. The dialog&rsquo;s <strong>i</strong> button explains this, and <strong>Use KyFromAbove&rsquo;s titiler</strong>
-      fills in KyFromAbove&rsquo;s own titiler URL (<code>https://6hp4guqpwe.execute-api.us-west-2.amazonaws.com</code>) to
-      revert to the original, which only holds KyFromAbove data.</p>
+      AWS access. The dialog&rsquo;s <strong>i</strong> button explains this.</p>
   </section>
 
   <section id="results">
