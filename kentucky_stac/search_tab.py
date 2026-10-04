@@ -19,6 +19,7 @@ from qgis.PyQt.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QFileDialog,
+    QMenu,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -50,6 +51,7 @@ from .item_json import item_json_text, json_to_html
 from .json_card import ItemJsonHover
 from .layers import AddLayersTask, LayerSpec, already_on_map, item_bbox, layer_specs, local_specs, union_bbox
 from .mosaic import BuildMosaicsTask, plan_mosaics
+from . import scripts
 from .mosaicjson import native_gsd, plan_mosaicjson, write_mosaicjson
 from .pdal_clip import CropPointCloudsTask, clipped_path
 from .results_layer import select_results, show_results
@@ -336,6 +338,11 @@ class SearchTab(QWidget):
             )
             self.server_mosaic_button.setEnabled(False)
             self.server_mosaic_button.clicked.connect(self.add_server_mosaic)
+        # A script (notebook, Python or shell) that downloads the selected tiles outside QGIS.
+        self.script_button = WrapButton("Export as script...")
+        self.script_button.setToolTip("Save a notebook, Python script or shell script that downloads the selected tiles")
+        self.script_button.setEnabled(False)
+        self.script_button.clicked.connect(self.export_script)
         # How many files download() at once (DownloadManager's own max_parallel) -- ported from the
         # old ArcGIS Pro add-in's "Parallel Downloads" option, which this plugin otherwise had no
         # equivalent of (a flat default of 3, not adjustable). Shared by both tabs via one QgsSettings
@@ -408,6 +415,7 @@ class SearchTab(QWidget):
             layout.addLayout(export_row)
         if self.server_mosaic_button is not None:
             layout.addWidget(self.server_mosaic_button)
+        layout.addWidget(self.script_button)
         concurrency_row = QHBoxLayout()
         concurrency_row.addWidget(self.concurrency_label)
         concurrency_row.addWidget(self.concurrency_spin)
@@ -748,6 +756,7 @@ class SearchTab(QWidget):
             self.mosaicjson_button.setEnabled(enabled)
         if self.server_mosaic_button is not None:
             self.server_mosaic_button.setEnabled(enabled)
+        self.script_button.setEnabled(enabled)
 
     # ---- add to map -----------------------------------------------------------------------
 
@@ -894,6 +903,43 @@ class SearchTab(QWidget):
             return
         specs = [LayerSpec(m.name, m.vrt_path, "gdal", m.bbox) for m in built]
         self._run_add(specs, list(self._pending_notes))
+
+    # ---- script export ----------------------------------------------------------------------
+
+    def export_script(self):
+        """Offer notebook / Python / shell, then save a script that downloads the selected tiles."""
+        if self._busy():
+            return
+        items = self.selected_items()
+        jobs, missing = plan_downloads(items, self._lidar, "")
+        if not jobs:
+            self._info("None of the selected tiles has a downloadable file.")
+            return
+        menu = QMenu(self)
+        for kind, (label, _ext, _filter) in scripts.KINDS.items():
+            menu.addAction(label).setData(kind)
+        chosen = menu.exec(self.script_button.mapToGlobal(self.script_button.rect().bottomLeft()))
+        if chosen is None:
+            return
+        kind = chosen.data()
+        _label, ext, file_filter = scripts.KINDS[kind]
+        settings = QgsSettings()
+        start = os.path.join(str(settings.value("kentucky_stac/script_dir", "") or ""), "download_tiles" + ext)
+        path, _ = QFileDialog.getSaveFileName(self, "Save the script", start, file_filter)
+        if not path:
+            return
+        settings.setValue("kentucky_stac/script_dir", os.path.dirname(path))
+        entries = scripts.entries_for((os.path.basename(j.dest), j.url) for j in jobs)
+        try:
+            with open(path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(scripts.render(kind, entries))
+        except OSError as e:
+            self._warn(f"Could not save the script: {e}")
+            return
+        text = f"Saved a script for {len(entries)} tile{'s' if len(entries) != 1 else ''} to {path}"
+        if missing:
+            text += f"; {len(missing)} without a downloadable file left out"
+        self._info(text + ".")
 
     # ---- MosaicJSON export ------------------------------------------------------------------
 
