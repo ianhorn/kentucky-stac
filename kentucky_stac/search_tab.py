@@ -405,7 +405,10 @@ class SearchTab(QWidget):
         layout.addWidget(self.tree, 1)
         layout.addLayout(actions)
         if self.vpc_button is not None:
-            layout.addWidget(self.vpc_button)
+            vpc_row = QHBoxLayout()
+            vpc_row.addWidget(self.vpc_button, 1)
+            vpc_row.addWidget(self.script_button, 1)
+            layout.addLayout(vpc_row)
         if self.mosaic_button is not None or self.mosaicjson_button is not None:
             export_row = QHBoxLayout()
             if self.mosaic_button is not None:
@@ -414,8 +417,10 @@ class SearchTab(QWidget):
                 export_row.addWidget(self.mosaicjson_button, 1)
             layout.addLayout(export_row)
         if self.server_mosaic_button is not None:
-            layout.addWidget(self.server_mosaic_button)
-        layout.addWidget(self.script_button)
+            server_row = QHBoxLayout()
+            server_row.addWidget(self.server_mosaic_button, 1)
+            server_row.addWidget(self.script_button, 1)
+            layout.addLayout(server_row)
         concurrency_row = QHBoxLayout()
         concurrency_row.addWidget(self.concurrency_label)
         concurrency_row.addWidget(self.concurrency_spin)
