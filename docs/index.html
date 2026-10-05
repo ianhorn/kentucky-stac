@@ -265,7 +265,7 @@
     <h3>Requirements</h3>
     <ul>
       <li><strong>QGIS 3.44 LTR</strong>, installed via <a href="https://trac.osgeo.org/osgeo4w/" target="_blank" rel="noopener">OSGeo4W</a> (minimum tested version 3.34).</li>
-      <li>QGIS 4.2.3 (Qt6) has not been tested against this plugin yet &mdash; use the LTR build.</li>
+      <li>QGIS 4.2 (Qt6) is supported too: search, streaming, downloads, mosaics, Virtual Point Clouds and clipping were all exercised on 4.2.3 in automated runs. The 3.44 LTR remains the build used day to day.</li>
       <li>PDAL, bundled with OSGeo4W, is required for point cloud AOI clipping and is already on <code>PATH</code> inside a normal OSGeo4W install.</li>
     </ul>
     <h3>Install the plugin</h3>
@@ -333,10 +333,18 @@
       <li><strong>Add</strong> searches the new API alongside the current sources; <strong>Replace all sources</strong>
         searches only it. Picking <strong>KyFromAbove</strong> from the dropdown is the way back to the default.</li>
       <li>Another source's collections are labeled <code>Title &middot; Source name</code> in the checklist and in
-        the results. Point cloud collections (declared via the STAC pointcloud extension, a "point cloud" keyword,
-        or a COPC asset) go on the LiDAR tab; everything else goes on Imagery / DEM.</li>
+        the results. While any source other than KyFromAbove is active, the two tabs are replaced by a single
+        <strong>Collections</strong> tab that lists every collection from every source. Each tile is treated as a
+        point cloud if it has a LAS/LAZ/COPC asset, and as imagery otherwise. This tab has the imagery actions
+        (Add to map, Download, Export VRT / MosaicJSON / script, server mosaic) but not the Virtual Point Cloud and
+        point-cloud clipping features. Going back to KyFromAbove alone brings the Imagery / DEM and LiDAR Pointcloud tabs back.</li>
       <li>Each source loads and searches independently: an unreachable API is reported, but doesn't stop the others.</li>
       <li>The source list is remembered between QGIS sessions.</li>
+      <li>Use the API&rsquo;s base URL, the one that answers <code>/collections</code>, not its browser documentation page
+        (for example <code>https://landsatlook.usgs.gov/stac-server</code>, not <code>.../stac-server/api.html</code>).</li>
+      <li>Some catalogs list tiles whose files need a login, such as USGS Landsat Look, whose files redirect to a USGS sign-in page.
+        The plugin can&rsquo;t sign in, so those tiles can&rsquo;t be streamed or downloaded; use an open copy of the data instead
+        (Landsat is also on Microsoft Planetary Computer).</li>
     </ul>
     <p>Other APIs implement STAC differently, so thumbnails, adding to the map, or downloads may not work for
       every one. Files at <code>s3://</code> addresses (common outside KyFromAbove) are handled for you:
