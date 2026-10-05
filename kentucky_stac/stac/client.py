@@ -160,7 +160,7 @@ class StacClient:
             seen.add(url)
             data = self._request("GET", url)
             found.extend(Collection.from_dict(c) for c in data.get("collections") or [])
-            url = next((l.get("href") for l in data.get("links") or [] if l.get("rel") == "next"), None)
+            url = next((link.get("href") for link in data.get("links") or [] if link.get("rel") == "next"), None)
         return found
 
     def get_item(self, collection_id: str, item_id: str) -> Item:
