@@ -1,5 +1,6 @@
 import os
 
+from qgis.core import Qgis, QgsMessageLog
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction
@@ -21,8 +22,10 @@ class KentuckyStacPlugin:
         # tiles can read them behind HTTPS-inspecting antivirus.
         try:
             setup_gdal()
-        except Exception:
-            pass  # remote rasters may fail to open, but the plugin itself should still load
+        except Exception as e:  # remote rasters may fail to open, but the plugin itself should still load
+            QgsMessageLog.logMessage(
+                f"Could not apply the GDAL network settings: {e}", "Kentucky STAC", Qgis.MessageLevel.Warning
+            )
 
         self.dock = KentuckyStacDock(self.iface, self.iface.mainWindow())
         self.iface.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock)

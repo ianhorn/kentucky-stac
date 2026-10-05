@@ -42,9 +42,11 @@ class StacError(Exception):
 def urllib_transport(
     method: str, url: str, body: Optional[bytes], headers: Dict[str, str], timeout: float = 120
 ) -> bytes:
+    if urllib.parse.urlparse(url).scheme not in ("http", "https"):
+        raise StacError(f"Not an http(s) URL: {url}")  # never file:// or another scheme
     req = urllib.request.Request(url, data=body, method=method, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310 -- scheme checked above
             data = resp.read()
             if resp.headers.get("Content-Encoding", "").lower() == "gzip":
                 data = gzip.decompress(data)

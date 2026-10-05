@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -69,6 +70,12 @@ def _pipeline_json(input_path: str, output_path: str, wkt_parts: List[str]) -> s
     return json.dumps({"pipeline": stages})
 
 
+def _resolve(exe: str) -> str:
+    """The full path of the PDAL executable (found on PATH), or `exe` unchanged if it isn't found, so
+    the usual "file not found" error still comes out of subprocess."""
+    return shutil.which(exe) or exe
+
+
 def crop_one(input_path: str, output_path: str, wkt_parts: List[str], pdal_exe: str = "pdal") -> Optional[str]:
     """Crop one tile to `wkt_parts` (polygon WKT strings in EPSG:4326, one per AOI part). Returns
     an error message on failure, None on success."""
@@ -77,8 +84,10 @@ def crop_one(input_path: str, output_path: str, wkt_parts: List[str], pdal_exe: 
     with open(pipeline_path, "w", encoding="utf-8") as f:
         f.write(_pipeline_json(input_path, output_path, wkt_parts))
     try:
-        result = subprocess.run(
-            [pdal_exe, "pipeline", pipeline_path], capture_output=True, text=True, timeout=_PDAL_TIMEOUT
+        # A fixed argument list, no shell: the executable is PDAL and the only variable argument is a
+        # pipeline file this function just wrote.
+        result = subprocess.run(  # nosec B603
+            [_resolve(pdal_exe), "pipeline", pipeline_path], capture_output=True, text=True, timeout=_PDAL_TIMEOUT
         )
         if result.returncode != 0:
             message = (result.stderr or result.stdout or "pdal pipeline failed").strip()
@@ -104,8 +113,12 @@ def real_metadata(path: str, pdal_exe: str = "pdal") -> Optional[Dict[str, Any]]
     fails; `count` is 0 (bbox/geometry None) if the crop produced no points at all -- the AOI simply
     doesn't reach this tile."""
     try:
-        result = subprocess.run(
-            [pdal_exe, "info", "--metadata", path], capture_output=True, text=True, timeout=_PDAL_TIMEOUT
+        # No shell; `path` is made absolute so it can never be read as an option.
+        result = subprocess.run(  # nosec B603
+            [_resolve(pdal_exe), "info", "--metadata", os.path.abspath(path)],
+            capture_output=True,
+            text=True,
+            timeout=_PDAL_TIMEOUT,
         )
         if result.returncode != 0:
             return None

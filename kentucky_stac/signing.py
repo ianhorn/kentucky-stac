@@ -16,7 +16,7 @@ from typing import Dict, Optional, Tuple
 from . import azure, s3
 from .qgis_transport import qgis_transport
 
-TOKEN_API = "https://planetarycomputer.microsoft.com/api/sas/v1/token/{account}/{container}"
+_SAS_SERVICE = "https://planetarycomputer.microsoft.com/api/sas/v1/token/{account}/{container}"  # public endpoint, no secret
 _REFRESH_MARGIN = 300  # ask for a new token when fewer than this many seconds remain
 _DEFAULT_LIFETIME = 1800
 _NEGATIVE_TTL = 600
@@ -33,7 +33,7 @@ def _fetch_token(account: str, container: str) -> Optional[str]:
             return cached[0]
     try:
         raw = qgis_transport(
-            "GET", TOKEN_API.format(account=account, container=container), None, {"Accept": "application/json"}
+            "GET", _SAS_SERVICE.format(account=account, container=container), None, {"Accept": "application/json"}
         )
         data = json.loads(raw)
         token = data["token"]
