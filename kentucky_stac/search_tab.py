@@ -278,7 +278,9 @@ class SearchTab(QWidget):
         self.tree.setUniformRowHeights(True)
         self._icon_size = _THUMBNAIL_SIZE  # grown to match each card's real height once results are shown
         self.tree.setIconSize(QSize(self._icon_size, self._icon_size))
-        self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        # Clicking a tile (or its checkbox) toggles just that tile, so any number can be picked one after
+        # another without holding Ctrl; Ctrl+A / Select All still take everything.
+        self.tree.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
         self.tree.itemSelectionChanged.connect(self._on_selection_changed)
         # Resting the mouse on a row opens a card with that tile's raw STAC JSON.
         self._json_hover = ItemJsonHover(self.tree, self._json_html_for_row, self)
