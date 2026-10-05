@@ -1,6 +1,7 @@
 [general]
 name=Kentucky STAC
 qgisMinimumVersion=3.34
+supportsQt6=True
 description=Search, load and download Kentucky From Above imagery, elevation and LiDAR via STAC.
 about=Search the Kentucky From Above STAC API (and, experimentally, other public STAC APIs) for imagery, DEM and LiDAR tiles within an area of interest. Add tiles to the map by streaming COG/COPC files, download them, combine them into GDAL VRT mosaics, MosaicJSON, titiler server mosaics or Virtual Point Clouds, clip them to your area of interest, or export a notebook/Python/shell script that downloads them. Requires PDAL (included with QGIS from OSGeo4W) on PATH for LiDAR clipping and virtual point cloud options; everything else uses QGIS's bundled Python, GDAL and network stack.
 version=0.1.2

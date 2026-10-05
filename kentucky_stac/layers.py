@@ -25,7 +25,7 @@ from qgis.core import (
 )
 
 from . import s3, signing
-from .catalog import DEFAULT_CRS, primary_asset
+from .catalog import DEFAULT_CRS, item_is_lidar, primary_asset
 from .gdal_setup import setup_gdal
 from .stac import Item
 
@@ -65,7 +65,7 @@ def raster_uri(href: str) -> str:
     return f"/vsicurl?list_dir=no&url={href.replace(chr(38), '%26')}"  # a SAS token holds &s that would end the url option
 
 
-def layer_specs(items: Iterable[Item], lidar: bool) -> Tuple[List[LayerSpec], List[Item]]:
+def layer_specs(items: Iterable[Item], lidar: Optional[bool]) -> Tuple[List[LayerSpec], List[Item]]:
     """Layer specs for the tiles that can be streamed, plus the tiles that can't (plain LAZ or
     LAS point clouds, which QGIS can only read once downloaded)."""
     specs: List[LayerSpec] = []
@@ -75,7 +75,7 @@ def layer_specs(items: Iterable[Item], lidar: bool) -> Tuple[List[LayerSpec], Li
         bbox = item_bbox(item)
         if asset is None or not asset.href:
             skipped.append(item)
-        elif lidar:
+        elif item_is_lidar(item, lidar):
             if asset.is_copc:
                 specs.append(LayerSpec(item.id, signing.fetchable_url(asset.href), "copc", bbox))
             else:
