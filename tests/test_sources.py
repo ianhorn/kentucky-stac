@@ -102,6 +102,13 @@ def test_split_puts_builtin_first_then_other_sources():
     assert [(x.id, x.source) for x in imagery] == [("a", ""), ("z", ""), ("b", OTHER)]
 
 
+def test_other_sources_are_listed_on_both_tabs():
+    cols = [Collection(id="laz-phase3"), Collection(id="dem-phase2"), Collection(id="x", source=OTHER)]
+    imagery, lidar = split_collections(cols)
+    assert [c.id for c in imagery] == ["dem-phase2", "x"]
+    assert [c.id for c in lidar] == ["laz-phase3", "x"]
+
+
 def test_lidar_thumbnail_fallback_is_kentucky_only():
     ky = Item(id="t", collection="laz-phase3")
     other = Item(id="t", collection="laz-phase3", source=OTHER)

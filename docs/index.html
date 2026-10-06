@@ -336,7 +336,9 @@
         the results. While any source other than KyFromAbove is active, the two tabs are renamed
         <strong>Raster</strong> and <strong>Point Cloud</strong>. Raster has the imagery/DEM actions and Point Cloud has the
         same actions as the LiDAR tab (streaming, download, Virtual Point Clouds with their options, clipping to the AOI,
-        Export as script). With KyFromAbove alone they are called Imagery / DEM and LiDAR Pointcloud.</li>
+        Export as script). Another source&rsquo;s collections are listed on <strong>both</strong> tabs, since they can&rsquo;t be
+        classified reliably: pick a point cloud collection on Point Cloud, anything else on Raster. With KyFromAbove alone the
+        tabs are called Imagery / DEM and LiDAR Pointcloud, and its own collections stay on their matching tab.</li>
       <li>Each source loads and searches independently: an unreachable API is reported, but doesn't stop the others.</li>
       <li>The source list is remembered between QGIS sessions.</li>
       <li>Use the API&rsquo;s base URL, the one that answers <code>/collections</code>, not its browser documentation page

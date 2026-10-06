@@ -36,11 +36,15 @@ def is_lidar_collection(collection: Collection) -> bool:
 
 def split_collections(collections: Iterable[Collection]) -> Tuple[List[Collection], List[Collection]]:
     """Split into (imagery_and_dem, lidar). Built-in collections come first, sorted by id (so
-    phases stay in order); any other source's follow, grouped by source."""
+    phases stay in order), and go to the tab for their kind. Any other source's follow, grouped by
+    source, and are listed on BOTH tabs: its collections can't be classified reliably, so the user
+    picks the tab (a point cloud collection searched on the raster tab just yields no raster tiles)."""
     ordered = sorted(collections, key=lambda c: (not is_default_uri(c.source), c.source, c.id))
-    lidar = [c for c in ordered if is_lidar_collection(c)]
-    other = [c for c in ordered if not is_lidar_collection(c)]
-    return other, lidar
+    own = [c for c in ordered if is_default_uri(c.source)]
+    others = [c for c in ordered if not is_default_uri(c.source)]
+    imagery = [c for c in own if not is_lidar_collection(c)] + others
+    lidar = [c for c in own if is_lidar_collection(c)] + others
+    return imagery, lidar
 
 
 def primary_asset(item: Item, lidar: bool) -> Optional[Asset]:
