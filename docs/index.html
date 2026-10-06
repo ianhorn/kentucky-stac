@@ -333,11 +333,10 @@
       <li><strong>Add</strong> searches the new API alongside the current sources; <strong>Replace all sources</strong>
         searches only it. Picking <strong>KyFromAbove</strong> from the dropdown is the way back to the default.</li>
       <li>Another source's collections are labeled <code>Title &middot; Source name</code> in the checklist and in
-        the results. While any source other than KyFromAbove is active, the two tabs are replaced by a single
-        <strong>Collections</strong> tab that lists every collection from every source. Each tile is treated as a
-        point cloud if it has a LAS/LAZ/COPC asset, and as imagery otherwise. This tab has the imagery actions
-        (Add to map, Download, Export VRT / MosaicJSON / script, server mosaic) but not the Virtual Point Cloud and
-        point-cloud clipping features. Going back to KyFromAbove alone brings the Imagery / DEM and LiDAR Pointcloud tabs back.</li>
+        the results. While any source other than KyFromAbove is active, the two tabs are renamed
+        <strong>Raster</strong> and <strong>Point Cloud</strong>. Raster has the imagery/DEM actions and Point Cloud has the
+        same actions as the LiDAR tab (streaming, download, Virtual Point Clouds with their options, clipping to the AOI,
+        Export as script). With KyFromAbove alone they are called Imagery / DEM and LiDAR Pointcloud.</li>
       <li>Each source loads and searches independently: an unreachable API is reported, but doesn't stop the others.</li>
       <li>The source list is remembered between QGIS sessions.</li>
       <li>Use the API&rsquo;s base URL, the one that answers <code>/collections</code>, not its browser documentation page

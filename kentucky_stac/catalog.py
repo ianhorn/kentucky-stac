@@ -43,22 +43,16 @@ def split_collections(collections: Iterable[Collection]) -> Tuple[List[Collectio
     return other, lidar
 
 
-def item_is_lidar(item: Item, lidar: Optional[bool]) -> bool:
-    """Whether to treat `item` as a point cloud. The LiDAR tab says yes and the Imagery / DEM tab no;
-    the mixed Collections tab (`lidar` is None) decides per tile: it is one if it has a point cloud asset."""
-    return bool(item.lidar_assets()) if lidar is None else lidar
-
-
-def primary_asset(item: Item, lidar: Optional[bool]) -> Optional[Asset]:
+def primary_asset(item: Item, lidar: bool) -> Optional[Asset]:
     """The asset a tile is searched/loaded/downloaded for: the point cloud (preferring COPC over
     plain LAZ/LAS) on the LiDAR tab, otherwise the item's data asset (a COG)."""
-    if item_is_lidar(item, lidar):
+    if lidar:
         assets = item.lidar_assets()
         return next((a for a in assets if a.is_copc), assets[0] if assets else None)
     return item.data_asset()
 
 
-def thumbnail_href(item: Item, lidar: Optional[bool]) -> Optional[str]:
+def thumbnail_href(item: Item, lidar: bool) -> Optional[str]:
     """The item's thumbnail image URL, or None if it definitely has none.
 
     The STAC API's own thumbnail asset is reliable for imagery/DEM, but confirmed live: a LiDAR
@@ -76,7 +70,7 @@ def thumbnail_href(item: Item, lidar: Optional[bool]) -> Optional[str]:
     if asset is not None and asset.href:
         return asset.href
     # The reconstructed URL is KyFromAbove's own bucket layout -- meaningless for another API.
-    if item_is_lidar(item, lidar) and item.collection and item.id and is_default_uri(item.source):
+    if lidar and item.collection and item.id and is_default_uri(item.source):
         return f"{LIDAR_THUMBNAIL_BASE}/collections/{item.collection}/thumbnails/{item.id}.png"
     return None
 

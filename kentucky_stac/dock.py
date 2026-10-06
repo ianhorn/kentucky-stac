@@ -51,16 +51,14 @@ class KentuckyStacDock(QDockWidget):
         bar = iface.messageBar()
         self.imagery_tab = SearchTab("imagery and DEM", "imagery", False, self.aoi_state, bar)
         self.lidar_tab = SearchTab("point cloud", "lidar", True, self.aoi_state, bar)
-        # Another STAC API's collections aren't Kentucky's imagery / LiDAR split, so while one is a source
-        # a single tab lists them all and decides per tile whether it is a point cloud.
-        self.collections_tab = SearchTab("imagery, DEM and point cloud", "collections", None, self.aoi_state, bar)
-        for tab in (self.imagery_tab, self.lidar_tab, self.collections_tab):
+        for tab in (self.imagery_tab, self.lidar_tab):
             tab.reload_requested.connect(self.load_collections)
             tab.sources_changed.connect(self.set_sources)
             tab.set_sources(self.sources)
 
         self.tabs = QTabWidget()
-        self._arrange_tabs()
+        self.tabs.addTab(self.imagery_tab, "Imagery / DEM")
+        self.tabs.addTab(self.lidar_tab, "LiDAR Pointcloud")
 
         content = QWidget()
         layout = QVBoxLayout(content)
@@ -69,6 +67,7 @@ class KentuckyStacDock(QDockWidget):
         layout.addWidget(self.tabs, 1)
         self.setWidget(content)
         self._update_sources_label()
+        self._name_tabs()
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -82,17 +81,12 @@ class KentuckyStacDock(QDockWidget):
         """Whether a source other than the built-in KyFromAbove catalog is active."""
         return any(not s.is_default for s in self.sources)
 
-    def _active_tabs(self) -> List[SearchTab]:
-        return [self.collections_tab] if self._mixed() else [self.imagery_tab, self.lidar_tab]
-
-    def _arrange_tabs(self):
-        """Imagery / DEM + LiDAR Pointcloud for KyFromAbove alone, one Collections tab otherwise."""
-        self.tabs.clear()  # takes the tabs out without deleting them
-        if self._mixed():
-            self.tabs.addTab(self.collections_tab, "Collections")
-        else:
-            self.tabs.addTab(self.imagery_tab, "Imagery / DEM")
-            self.tabs.addTab(self.lidar_tab, "LiDAR Pointcloud")
+    def _name_tabs(self):
+        """KyFromAbove's own tabs are Imagery / DEM and LiDAR Pointcloud; another API's collections are
+        simply rasters and point clouds."""
+        raster, cloud = ("Raster", "Point Cloud") if self._mixed() else ("Imagery / DEM", "LiDAR Pointcloud")
+        self.tabs.setTabText(self.tabs.indexOf(self.imagery_tab), raster)
+        self.tabs.setTabText(self.tabs.indexOf(self.lidar_tab), cloud)
 
     # ---- sources ---------------------------------------------------------------------------
 
@@ -115,9 +109,9 @@ class KentuckyStacDock(QDockWidget):
         self.sources = list(sources)
         QgsSettings().setValue(SOURCES_SETTINGS_KEY, serialize_sources(self.sources))
         self._update_sources_label()
-        for tab in (self.imagery_tab, self.lidar_tab, self.collections_tab):
+        for tab in (self.imagery_tab, self.lidar_tab):
             tab.set_sources(self.sources)
-        self._arrange_tabs()
+        self._name_tabs()
         if reload:
             self.load_collections()
 
@@ -128,8 +122,8 @@ class KentuckyStacDock(QDockWidget):
             self._task.cancel()
             self._task = None
         self._loaded = True
-        for tab in self._active_tabs():
-            tab.set_loading()
+        self.imagery_tab.set_loading()
+        self.lidar_tab.set_loading()
         self._task = CollectionsTask(self.sources, self._on_collections)
         QgsApplication.taskManager().addTask(self._task)
 
@@ -142,11 +136,8 @@ class KentuckyStacDock(QDockWidget):
             )
         if not collections and errors:
             message = "; ".join(f"{name}: {msg}" for name, msg in errors)
-            for tab in self._active_tabs():
-                tab.set_error(message)
-            return
-        if self._mixed():
-            self.collections_tab.set_collections(collections)
+            self.imagery_tab.set_error(message)
+            self.lidar_tab.set_error(message)
             return
         imagery, lidar = split_collections(collections)
         self.imagery_tab.set_collections(imagery)
@@ -157,7 +148,6 @@ class KentuckyStacDock(QDockWidget):
         self.aoi_bar.shutdown()
         self.imagery_tab.shutdown()
         self.lidar_tab.shutdown()
-        self.collections_tab.shutdown()
         if self._task is not None:
             self._task.cancel()
             self._task = None
