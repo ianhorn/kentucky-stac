@@ -49,8 +49,9 @@ class KentuckyStacDock(QDockWidget):
         sources_row.addWidget(self.help_button)
 
         bar = iface.messageBar()
-        self.imagery_tab = SearchTab("imagery and DEM", "imagery", False, self.aoi_state, bar)
-        self.lidar_tab = SearchTab("point cloud", "lidar", True, self.aoi_state, bar)
+        canvas = iface.mapCanvas()
+        self.imagery_tab = SearchTab("imagery and DEM", "imagery", False, self.aoi_state, bar, canvas=canvas)
+        self.lidar_tab = SearchTab("point cloud", "lidar", True, self.aoi_state, bar, canvas=canvas)
         for tab in (self.imagery_tab, self.lidar_tab):
             tab.reload_requested.connect(self.load_collections)
             tab.sources_changed.connect(self.set_sources)

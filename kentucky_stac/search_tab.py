@@ -12,7 +12,7 @@ from qgis.core import (
     QgsSettings,
     QgsUnitTypes,
 )
-from qgis.PyQt.QtCore import QSize, Qt, QUrl, pyqtSignal
+from qgis.PyQt.QtCore import QEvent, QObject, QSize, Qt, QUrl, pyqtSignal
 from qgis.PyQt.QtGui import QIcon, QImage, QPixmap
 from qgis.PyQt.QtNetwork import QNetworkReply, QNetworkRequest
 from qgis.PyQt.QtWidgets import (
@@ -49,6 +49,7 @@ from . import signing
 from .filters_panel import FiltersPanel
 from .item_json import item_json_text, json_to_html
 from .json_card import ItemJsonHover
+from .map_link import MapResultsLink
 from .layers import AddLayersTask, LayerSpec, already_on_map, item_bbox, layer_specs, local_specs, union_bbox
 from .mosaic import BuildMosaicsTask, plan_mosaics
 from . import scripts
@@ -200,13 +201,32 @@ def _describe(c: Collection, source: str = "") -> str:
     return f"{text}\n\nSource: {source}" if source else text
 
 
+class _EveryClickToggles(QObject):
+    """Make a rapid second click on the same tile toggle it again.
+
+    The list toggles a tile on each click, but Qt turns a second click at the same spot within the
+    double-click interval into a double-click event, which does not change the selection -- so quickly
+    ticking and unticking a checkbox (or two clicks that land together) looked like it did nothing."""
+
+    def eventFilter(self, obj, event):  # noqa: N802 (Qt override)
+        if event.type() == QEvent.Type.MouseButtonDblClick and event.button() == Qt.MouseButton.LeftButton:
+            tree = self.parent()
+            item = tree.itemAt(event.position().toPoint() if hasattr(event, "position") else event.pos())
+            if item is not None:
+                item.setSelected(not item.isSelected())
+            return True
+        return False
+
+
 class SearchTab(QWidget):
     """Pick collection(s), search the current AOI, and list the matching tiles."""
 
     reload_requested = pyqtSignal()
     sources_changed = pyqtSignal(list)  # the source list with a tile server URL newly set
 
-    def __init__(self, what: str, kind: str, lidar: bool, aoi_state: AoiState, message_bar=None, parent=None):
+    def __init__(
+        self, what: str, kind: str, lidar: bool, aoi_state: AoiState, message_bar=None, parent=None, canvas=None
+    ):
         super().__init__(parent)
         self._what = what
         self._kind = kind  # identifies this tab's results layer
@@ -282,8 +302,12 @@ class SearchTab(QWidget):
         # another without holding Ctrl; Ctrl+A / Select All still take everything.
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
         self.tree.itemSelectionChanged.connect(self._on_selection_changed)
+        self._toggle_clicks = _EveryClickToggles(self.tree)
+        self.tree.viewport().installEventFilter(self._toggle_clicks)
         # Resting the mouse on a row opens a card with that tile's raw STAC JSON.
         self._json_hover = ItemJsonHover(self.tree, self._json_html_for_row, self)
+        # The results footprints on the map and this list follow each other (see map_link.py).
+        self._link = MapResultsLink(canvas, self.tree, kind, self._after_map_selection, self)
         self._thumb_replies: List[QNetworkReply] = []
 
         self.add_button = WrapButton("Add selected to map")
@@ -634,13 +658,18 @@ class SearchTab(QWidget):
         except Exception as e:
             self._fids = [None] * len(self._items)
             self._warn(f"Found tiles, but could not draw them on the map: {e}")
+        self._link.set_results(self._items, self._fids)
 
         for index, item in enumerate(self._items):
             asset = primary_asset(item, self._lidar)
             row = QTreeWidgetItem(["", "", ""])
             self.tree.addTopLevelItem(row)
             checkbox = QCheckBox()
-            checkbox.toggled.connect(lambda checked, row=row: row.setSelected(checked))
+            # Only a mirror of the row's selection (see _sync_card_checkboxes). Letting it take clicks of its
+            # own meant a click could toggle the box and the row separately, and they drifted apart; now a
+            # click anywhere on the row, checkbox included, reaches the list and toggles the tile once.
+            checkbox.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            checkbox.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             self.tree.setItemWidget(row, _CHECKBOX_COLUMN, checkbox)
             self._json_hover.watch(checkbox, index)
             source = self._source_label(item.source)
@@ -678,6 +707,7 @@ class SearchTab(QWidget):
 
     def _clear_results(self):
         self._json_hover.reset()
+        self._link.clear()
         self._cancel_thumbnail_fetches()
         self._items = []
         self._fids = []
@@ -727,6 +757,11 @@ class SearchTab(QWidget):
     def _on_selection_changed(self):
         rows = [self.tree.indexOfTopLevelItem(i) for i in self.tree.selectedItems()]
         select_results(self._kind, [self._fids[r] for r in rows if r < len(self._fids) and self._fids[r] is not None])
+        self._sync_card_checkboxes()
+        self._update_add_enabled()
+
+    def _after_map_selection(self):
+        """The tile selection was just changed from the map: bring the checkboxes and buttons along."""
         self._sync_card_checkboxes()
         self._update_add_enabled()
 
@@ -1293,6 +1328,7 @@ class SearchTab(QWidget):
 
     def shutdown(self):
         self._json_hover.reset()
+        self._link.shutdown()
         self._cancel_thumbnail_fetches()
         for attr in ("_task", "_add_task", "_size_task", "_mosaic_task", "_register_task", "_clip_task"):
             task = getattr(self, attr)
