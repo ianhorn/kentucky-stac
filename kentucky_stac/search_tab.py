@@ -13,7 +13,7 @@ from qgis.core import (
     QgsUnitTypes,
 )
 from qgis.PyQt.QtCore import QEvent, QObject, QSize, Qt, QUrl, pyqtSignal
-from qgis.PyQt.QtGui import QIcon, QImage, QPixmap
+from qgis.PyQt.QtGui import QGuiApplication, QIcon, QImage, QPixmap
 from qgis.PyQt.QtNetwork import QNetworkReply, QNetworkRequest
 from qgis.PyQt.QtWidgets import (
     QAbstractItemView,
@@ -43,14 +43,24 @@ from .downloads import (
     DownloadManager,
     SizesTask,
     default_concurrency,
+    filename_from_href,
     plan_downloads,
 )
-from . import signing
+from . import azure, signing
 from .filters_panel import FiltersPanel
 from .item_json import item_json_text, json_to_html
 from .json_card import ItemJsonHover
 from .map_link import MapResultsLink
-from .layers import AddLayersTask, LayerSpec, already_on_map, item_bbox, layer_specs, local_specs, union_bbox
+from .layers import (
+    AddLayersTask,
+    LayerSpec,
+    already_on_map,
+    asset_layer_spec,
+    item_bbox,
+    layer_specs,
+    local_specs,
+    union_bbox,
+)
 from .mosaic import BuildMosaicsTask, plan_mosaics
 from . import scripts
 from .mosaicjson import native_gsd, plan_mosaicjson, write_mosaicjson
@@ -308,6 +318,8 @@ class SearchTab(QWidget):
         self._json_hover = ItemJsonHover(self.tree, self._json_html_for_row, self)
         # The results footprints on the map and this list follow each other (see map_link.py).
         self._link = MapResultsLink(canvas, self.tree, kind, self._after_map_selection, self)
+        self._json_hover.asset_action.connect(self._on_asset_action)
+        self._single_asset_download = False  # set while a download started from the JSON card runs
         self._thumb_replies: List[QNetworkReply] = []
 
         self.add_button = WrapButton("Add selected to map")
@@ -702,8 +714,63 @@ class SearchTab(QWidget):
         self._set_results_message(text)
         self._update_search_enabled()
 
+    # ---- asset actions from the hover card -----------------------------------------------------
+
+    def _on_asset_action(self, row: int, action: str, key: str):
+        """download / copy URL / add to map for one asset of a tile, picked in the JSON hover card."""
+        if not 0 <= row < len(self._items):
+            return
+        item = self._items[row]
+        asset = item.assets.get(key)
+        if asset is None or not asset.href:
+            self._warn(f"{item.id} has no URL for asset '{key}'.")
+            return
+        if action == "copy":
+            url = signing.fetchable_url(asset.href) if azure.parse(asset.href) else asset.href
+            QGuiApplication.clipboard().setText(url)
+            note = " (signed, so it works for a limited time)" if url != asset.href else ""
+            self._info(f"Copied the URL of asset '{key}' ({item.id}) to the clipboard{note}.")
+        elif action == "map":
+            if self._busy():
+                self._warn("Wait for the current task to finish first.")
+                return
+            spec = asset_layer_spec(item, key)
+            if spec is None:
+                self._warn(f"Asset '{key}' can't be shown on the map; download it instead.")
+            elif already_on_map([spec]):
+                self._info(f"Asset '{key}' of {item.id} is already on the map.")
+            else:
+                self._run_add([spec], [f"asset '{key}'"])
+        elif action == "download":
+            self._download_asset(item, key, asset.href)
+
+    def _download_asset(self, item: Item, key: str, href: str):
+        if self._busy():
+            self._warn("Wait for the current task to finish first.")
+            return
+        settings = QgsSettings()
+        start = os.path.join(str(settings.value("kentucky_stac/download_dir", "") or ""), filename_from_href(href))
+        path, _ = QFileDialog.getSaveFileName(self, f"Save asset '{key}' of {item.id}", start)
+        if not path:
+            return
+        settings.setValue("kentucky_stac/download_dir", os.path.dirname(path))
+        try:
+            if os.path.exists(path):
+                os.remove(path)  # the save dialog already asked about overwriting
+        except OSError as e:
+            self._warn(f"Could not replace {path}: {e}")
+            return
+        job = DownloadJob(f"{item.id} · {key}", href, path)
+        self._download_files, self._download_bboxes, self._download_items = [path], {}, {}
+        self._pending_notes = []
+        self._single_asset_download = True  # just save it: no adding to the map afterwards
+        self._begin_download([job], {})
+
     def _json_html_for_row(self, row: int) -> Optional[str]:
-        return json_to_html(item_json_text(self._items[row])) if 0 <= row < len(self._items) else None
+        if not 0 <= row < len(self._items):
+            return None
+        item = self._items[row]
+        return json_to_html(item_json_text(item), item)
 
     def _clear_results(self):
         self._json_hover.reset()
@@ -1211,7 +1278,8 @@ class SearchTab(QWidget):
             if failed:
                 parts.append(f"{len(failed)} failed (first: {failed[0][0]}: {failed[0][1]})")
             (self._warn if failed else self._info)("; ".join(parts) + ".")
-        if cancelled or not self.add_when_done.isChecked():
+        single, self._single_asset_download = self._single_asset_download, False
+        if cancelled or single or not self.add_when_done.isChecked():
             return
         # Add every planned file that is now on disk, including ones downloaded on an earlier run.
         paths = [f for f in self._download_files if os.path.exists(f)]

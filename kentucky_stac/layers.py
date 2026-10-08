@@ -25,7 +25,7 @@ from qgis.core import (
 )
 
 from . import s3, signing
-from .catalog import DEFAULT_CRS, primary_asset
+from .catalog import DEFAULT_CRS, can_add_to_map, primary_asset
 from .gdal_setup import setup_gdal
 from .stac import Item
 
@@ -83,6 +83,19 @@ def layer_specs(items: Iterable[Item], lidar: bool) -> Tuple[List[LayerSpec], Li
         else:
             specs.append(LayerSpec(item.id, raster_uri(asset.href), "gdal", bbox))
     return specs, skipped
+
+
+def asset_layer_spec(item: Item, key: str) -> Optional[LayerSpec]:
+    """A layer spec for one named asset of a tile (any raster asset, or a COPC point cloud), or None if
+    that asset can't be shown on the map."""
+    asset = item.assets.get(key)
+    if asset is None or not can_add_to_map(asset):
+        return None
+    name = f"{item.id} · {key}"
+    bbox = item_bbox(item)
+    if asset.is_copc:
+        return LayerSpec(name, signing.fetchable_url(asset.href), "copc", bbox)
+    return LayerSpec(name, raster_uri(asset.href), "gdal", bbox)
 
 
 def union_bbox(boxes: List[Bbox]) -> Optional[Bbox]:

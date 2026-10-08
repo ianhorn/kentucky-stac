@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import urllib.parse
 from typing import Iterable, List, Optional, Tuple
 
 from .sources import is_default_uri
@@ -45,6 +46,22 @@ def split_collections(collections: Iterable[Collection]) -> Tuple[List[Collectio
     imagery = [c for c in own if not is_lidar_collection(c)] + others
     lidar = [c for c in own if is_lidar_collection(c)] + others
     return imagery, lidar
+
+
+_RASTER_SUFFIXES = (".tif", ".tiff", ".jp2", ".vrt")
+
+
+def is_raster_asset(asset: Asset) -> bool:
+    """Whether an asset is an image GDAL can open as a map layer (a GeoTIFF or JPEG 2000 file)."""
+    path = urllib.parse.urlparse(asset.href or "").path.lower()
+    kind = (asset.type or "").lower()
+    return path.endswith(_RASTER_SUFFIXES) or "geotiff" in kind or "jp2" in kind
+
+
+def can_add_to_map(asset: Asset) -> bool:
+    """Whether "add to map" makes sense for this asset: a raster, or a COPC point cloud (plain LAZ/LAS
+    can't be streamed). Thumbnails, metadata files and the like are not."""
+    return bool(asset.href) and (asset.is_copc or is_raster_asset(asset))
 
 
 def primary_asset(item: Item, lidar: bool) -> Optional[Asset]:
