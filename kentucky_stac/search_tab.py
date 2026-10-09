@@ -67,7 +67,7 @@ from .mosaicjson import native_gsd, plan_mosaicjson, write_mosaicjson
 from .pdal_clip import CropPointCloudsTask, clipped_path
 from .results_layer import select_results, show_results
 from .server_layers import RegisterMosaicsTask, add_cog_layers, add_search_layer, plan_server_mosaics, tiler_url
-from .sources import DEFAULT_SOURCE, ORIGINAL_TITILER_URL, ApiSource, is_default_uri, source_name, tiler_for
+from .sources import DEFAULT_SOURCE, ApiSource, is_default_uri, source_name, tiler_for
 from .stac import Collection, Item, SearchQuery
 from .tasks import PAGE_SIZE, SearchTask
 from .vpc import build_vpc
@@ -373,10 +373,12 @@ class SearchTab(QWidget):
         self.server_mosaic_button: Optional[QPushButton] = None
         if not lidar:
             self.server_mosaic_button = WrapButton("Add as server mosaic")
-            self.server_mosaic_button.setToolTip(
+            self._server_mosaic_tip = (
                 "Register the selected tiles as a mosaic on the tile server and stream it "
-                "(one mosaic per collection; renders like the streaming layer above)"
+                "(one mosaic per collection). For another API this needs your own titiler: "
+                "set it under Sources... > Tile server..."
             )
+            self.server_mosaic_button.setToolTip(self._server_mosaic_tip)
             self.server_mosaic_button.setEnabled(False)
             self.server_mosaic_button.clicked.connect(self.add_server_mosaic)
         # A script (notebook, Python or shell) that downloads the selected tiles outside QGIS.
@@ -500,6 +502,11 @@ class SearchTab(QWidget):
 
     def set_sources(self, sources: List[ApiSource]):
         self._sources = list(sources)
+        self._update_add_enabled()  # a tile server may have just been set (or cleared) for a source
+
+    def _can_server_mosaic(self, item: Item) -> bool:
+        """KyFromAbove's tiles always can; another source's only once the user has set a tile server for it."""
+        return is_default_uri(item.source) or bool(tiler_for(self._sources, item.source))
 
     def _source_label(self, base_uri: str) -> str:
         """A source's display name, or "" for the built-in catalog (left unlabeled, as before)."""
@@ -868,8 +875,22 @@ class SearchTab(QWidget):
         if self.mosaicjson_button is not None:
             self.mosaicjson_button.setEnabled(enabled)
         if self.server_mosaic_button is not None:
-            self.server_mosaic_button.setEnabled(enabled)
+            self._update_server_mosaic_button(enabled)
         self.script_button.setEnabled(enabled)
+
+    def _update_server_mosaic_button(self, enabled: bool):
+        """Gray out "Add as server mosaic" unless at least one selected tile can be served: KyFromAbove's
+        can, another API's only with a titiler of the user's own (Sources... > Tile server...)."""
+        items = self.selected_items() if enabled else []
+        usable = any(self._can_server_mosaic(i) for i in items)
+        self.server_mosaic_button.setEnabled(enabled and usable)
+        missing = sorted({source_name(self._sources, i.source) for i in items if not self._can_server_mosaic(i)})
+        if enabled and not usable and missing:
+            self.server_mosaic_button.setToolTip(
+                f"Needs a titiler of your own for {', '.join(missing)}: enter its URL under Sources... > Tile server..."
+            )
+        else:
+            self.server_mosaic_button.setToolTip(self._server_mosaic_tip)
 
     # ---- add to map -----------------------------------------------------------------------
 
@@ -1129,16 +1150,25 @@ class SearchTab(QWidget):
         if self._busy():
             return
         items = self.selected_items()
-        # KyFromAbove's tiles use its titiler-pgstac server. Another source's tiles use that source's own
-        # titiler if one was set (Sources... > Tile server...), else KyFromAbove's plain titiler.
-        self._server_mosaic_note = ""
+        # KyFromAbove's tiles use its titiler-pgstac server. Another source's tiles need that source's own
+        # titiler (Sources... > Tile server...); tiles of a source without one are left out.
+        skipped = sum(1 for i in items if not self._can_server_mosaic(i))
+        self._server_mosaic_note = (
+            f"{skipped} tile{'s' if skipped != 1 else ''} left out (no tile server set for {'their' if skipped != 1 else 'its'} source)"
+            if skipped
+            else ""
+        )
         groups = plan_server_mosaics(
             items,
-            lambda uri: tiler_url() if is_default_uri(uri) else tiler_for(self._sources, uri) or ORIGINAL_TITILER_URL,
+            lambda uri: tiler_url() if is_default_uri(uri) else tiler_for(self._sources, uri),
             lambda uri: source_name(self._sources, uri),
         )
         if not groups:
-            self._info("Nothing to register: the selected tiles have no usable collection.")
+            self._info(
+                "Nothing to register: no tile server is set for the selected tiles' source."
+                if skipped
+                else "Nothing to register: the selected tiles have no usable collection."
+            )
             return
         self.server_mosaic_button.setText("Registering mosaic...")
         self._register_task = RegisterMosaicsTask(groups, self._on_server_mosaics_registered)

@@ -356,8 +356,9 @@
       <code>AWS_SECRET_ACCESS_KEY</code> environment variables or in <code>~/.aws/credentials</code>
       (restart QGIS after setting them). With credentials found, files are read through GDAL&rsquo;s signed S3
       access, and for requester-pays buckets the transfer charges go to your AWS account. <strong>Add as server mosaic</strong> uses KyFromAbove&rsquo;s titiler-pgstac server for KyFromAbove tiles. For
-      tiles from another source it uses KyFromAbove&rsquo;s shared <strong>plain titiler</strong> unless you set your own, which is
-      encouraged: set it under <strong>Sources... &rarr; Tile server...</strong>. This is <strong>experimental</strong>.
+      tiles from another source the button stays <strong>grayed out</strong> until you have brought your own titiler: set it under
+      <strong>Sources... &rarr; Tile server...</strong> (hover the button to see which source needs one). If you select tiles from
+      several sources, the ones without a tile server are left out. This is <strong>experimental</strong>.
       Two kinds of server work, and the plugin works out which yours is:</p>
     <ul>
       <li><a href="https://github.com/stac-utils/titiler-pgstac" target="_blank" rel="noopener">titiler-pgstac</a> connected

@@ -41,18 +41,18 @@ _WARNING = (
 )
 
 _TILER_NOTICE = (
-    "<b>&#9888; Use your own titiler.</b> For another API, \"Add as server mosaic\" falls back to "
-    "KyFromAbove's shared plain titiler, which may be slow, rate-limited or unable to read some files. "
-    "You are encouraged to enter the base URL of your own <b>titiler</b> or <b>titiler-pgstac</b> server "
-    "below (or via <i>Tile server...</i>) for reliable results."
+    "<b>&#9888; Bring your own titiler URL.</b> \"Add as server mosaic\" stays grayed out for another API's "
+    "tiles until you enter the base URL of your own <b>titiler</b> or <b>titiler-pgstac</b> server below "
+    "(or via <i>Tile server...</i>). The built-in server holds KyFromAbove data only. Without one, use "
+    "\"Add selected to map\" or download instead."
 )
 
 
 _TILER_INFO = (
     "<p><b>What this is.</b> \"Add as server mosaic\" streams tiles from a <b>titiler</b> server, which turns "
     "cloud-optimized GeoTIFFs into map tiles on the fly. KyFromAbove's tiles use its "
-    "titiler-pgstac server. For any other source the shared KyFromAbove plain titiler is used unless you "
-    "set <b>your own titiler</b>, which is encouraged.</p>"
+    "titiler-pgstac server. For any other source the button stays grayed out until you set "
+    "<b>your own titiler</b>.</p>"
     "<p><b>Two kinds work:</b></p><ul>"
     "<li><b>titiler-pgstac</b> connected to that API's catalog: one mosaic layer per collection.</li>"
     "<li><b>Plain titiler</b> (<code>/cog/tiles</code>): one layer per tile (up to 50 at a time), each reading "
@@ -73,9 +73,9 @@ class TilerUrlDialog(QDialog):
         self.setWindowTitle("Tile server")
         self.setMinimumWidth(480)
         warning = QLabel(
-            "<b>Experimental.</b> Without a URL, "
-            f"{source_name} uses KyFromAbove's shared plain titiler. You are encouraged to enter the base URL "
-            "of your own titiler / titiler-pgstac server. Servers differ, so this may not work with every one."
+            "<b>Experimental.</b> \"Add as server mosaic\" stays grayed out for "
+            f"{source_name} until you enter the base URL of your own titiler / titiler-pgstac server. "
+            "Servers differ, so this may not work with every one."
         )
         warning.setWordWrap(True)
         warning.setStyleSheet(
@@ -191,7 +191,7 @@ class SourcesDialog(QDialog):
         self.error_label.setVisible(False)
 
         self.tiler_edit = QLineEdit()
-        self.tiler_edit.setPlaceholderText("Your own titiler / titiler-pgstac URL (encouraged; else the shared plain titiler is used)")
+        self.tiler_edit.setPlaceholderText("Your own titiler / titiler-pgstac URL (needed for \"Add as server mosaic\")")
 
         form = QFormLayout()
         form.addRow("STAC Index", self.catalog_combo)
