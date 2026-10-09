@@ -5,7 +5,7 @@ supportsQt6=True
 qgisMaximumVersion=4.99
 description=Search, load and download Kentucky From Above imagery, elevation and LiDAR via STAC.
 about=Search the Kentucky From Above STAC API (and, experimentally, other public STAC APIs) for imagery, DEM and LiDAR tiles within an area of interest. Add tiles to the map by streaming COG/COPC files, download them, combine them into GDAL VRT mosaics, MosaicJSON, titiler server mosaics or Virtual Point Clouds, clip them to your area of interest, or export a notebook/Python/shell script that downloads them. Requires PDAL (included with QGIS from OSGeo4W) on PATH for LiDAR clipping and virtual point cloud options; everything else uses QGIS's bundled Python, GDAL and network stack.
-version=0.1.7
+version=0.1.8
 author=Ian Horn
 email=ianhorn17@gmail.com
 tracker=https://github.com/ianhorn/kentucky-stac/issues
@@ -15,7 +15,8 @@ license=GPL-2.0-or-later
 icon=icon.svg
 experimental=True
 tags=stac,kentucky,lidar,copc,imagery,dem
-changelog=0.1.7 - Hovering the map highlights tiles in the results list and selecting footprints selects them; reliable result checkboxes; result JSON card links to download, copy the URL of or add each asset to the map, and can be pinned, moved and resized.
+changelog=0.1.8 - Add as server mosaic is grayed out for another API's tiles until you set your own titiler (the shared plain-titiler fallback that added one layer per tile is gone).
+  0.1.7 - Hovering the map highlights tiles in the results list and selecting footprints selects them; reliable result checkboxes; result JSON card links to download, copy the URL of or add each asset to the map, and can be pinned, moved and resized.
   0.1.6 - Another STAC API's collections are listed on both the Raster and Point Cloud tabs, so you pick the tab.
   0.1.5 - Other STAC APIs get Raster and Point Cloud tabs (with all the LiDAR options); clicking a result tile now toggles just that tile, so several can be selected without Ctrl.
   0.1.4 - Declare qgisMaximumVersion 4.99 so the registry offers the plugin to QGIS 4 (it was capped at 3.99).
