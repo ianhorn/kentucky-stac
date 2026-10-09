@@ -253,6 +253,7 @@
       <span class="pill">GDAL VRT mosaics</span>
       <span class="pill">MosaicJSON export</span>
       <span class="pill">Download scripts</span>
+      <span class="pill">Map-linked results</span>
       <span class="pill">titiler-pgstac mosaics</span>
       <span class="pill">PDAL AOI clipping</span>
     </div>
@@ -264,19 +265,26 @@
       manager or virtual environment is involved.</p>
     <h3>Requirements</h3>
     <ul>
-      <li><strong>QGIS 3.44 LTR</strong>, installed via <a href="https://trac.osgeo.org/osgeo4w/" target="_blank" rel="noopener">OSGeo4W</a> (minimum tested version 3.34).</li>
-      <li>QGIS 4.2 (Qt6) is supported too: search, streaming, downloads, mosaics, Virtual Point Clouds and clipping were all exercised on 4.2.3 in automated runs. The 3.44 LTR remains the build used day to day.</li>
+      <li><strong>QGIS 3.34 or later</strong>; the 3.44 LTR, installed via <a href="https://trac.osgeo.org/osgeo4w/" target="_blank" rel="noopener">OSGeo4W</a>, is the build it is developed on.</li>
+      <li><strong>QGIS 4 (Qt6)</strong> is supported too: search, streaming, downloads, mosaics, Virtual Point Clouds and clipping were all exercised on 4.2.3, and the plugin is listed for it in the plugin repository.</li>
       <li>PDAL, bundled with OSGeo4W, is required for point cloud AOI clipping and is already on <code>PATH</code> inside a normal OSGeo4W install.</li>
     </ul>
     <h3>Install the plugin</h3>
-    <p>The source is on GitHub at
+    <p><strong>From the QGIS plugin repository (recommended).</strong> Open <strong>Plugins &rarr; Manage and Install Plugins &rarr;
+      Settings</strong> and tick <strong>Show also experimental plugins</strong> (the plugin is still flagged experimental), then search for
+      <strong>Kentucky STAC</strong> under <strong>All</strong> and click <strong>Install Plugin</strong>. It is also at
+      <a href="https://plugins.qgis.org/plugins/kentucky_stac/" target="_blank" rel="noopener">plugins.qgis.org/plugins/kentucky_stac</a>, and each
+      version&rsquo;s zip is on the <a href="https://github.com/ianhorn/kentucky-stac/releases" target="_blank" rel="noopener">GitHub Releases</a> page
+      (<strong>Install from ZIP</strong> works with it too).</p>
+    <p><strong>From source, for development.</strong> The source is on GitHub at
       <a href="https://github.com/ianhorn/kentucky-stac" target="_blank" rel="noopener">ianhorn/kentucky-stac</a>
       (<code>git clone https://github.com/ianhorn/kentucky-stac.git</code>); the plugin is the <code>kentucky_stac/</code> folder.</p>
-    <p>Copy (or symlink/junction, for development) the <code>kentucky_stac/</code> folder into your QGIS
+    <p>Copy (or symlink/junction) the <code>kentucky_stac/</code> folder into your QGIS
       profile's plugin directory:</p>
     <pre><code>%APPDATA%\QGIS\QGIS3\profiles\default\python\plugins\kentucky_stac</code></pre>
-    <p>Then enable it from <strong>Plugins &rarr; Manage and Install Plugins &rarr; Installed</strong>, and open
-      it from <strong>Plugins &rarr; Kentucky STAC</strong> (or the toolbar icon). While developing, the
+    <p>Either way, enable it under <strong>Plugins &rarr; Manage and Install Plugins &rarr; Installed</strong> and open
+      it from <strong>Plugins &rarr; Kentucky STAC</strong> (or the toolbar icon). A junction to your working copy means
+      <em>Uninstall</em> or <em>Install from ZIP</em> in the Plugin Manager would delete the working copy, so don&rsquo;t use those while developing. The
       <a href="https://plugins.qgis.org/plugins/plugin_reloader/" target="_blank" rel="noopener">Plugin Reloader</a>
       plugin picks up code changes without restarting QGIS.</p>
   </section>
@@ -378,6 +386,16 @@
     <p><strong>Hover for the raw JSON.</strong> Rest the mouse on a tile for half a second and a card opens beside the
       panel with that tile&rsquo;s STAC item exactly as the catalog returned it: properties, assets, links. It stays open
       while the mouse is over the tile or the card, so you can scroll it, select and copy text, and click any URL.</p>
+    <h3>Work with a tile&rsquo;s assets from the card</h3>
+    <p>Under each asset&rsquo;s URL the card shows <code>[ download | copy URL | add to map ]</code>.</p>
+    <ul>
+      <li><strong>download</strong> asks where to save that one file and saves it with the usual progress bar. It never adds the file to the map afterwards.</li>
+      <li><strong>copy URL</strong> puts the asset&rsquo;s address on the clipboard. For a Planetary Computer (Azure) asset it is a signed link that works for a limited time.</li>
+      <li><strong>add to map</strong> streams that asset as a layer. It is offered only for rasters (GeoTIFF, JPEG 2000) and COPC point clouds, not for thumbnails, metadata files or plain LAZ.</li>
+    </ul>
+    <p>Press <strong>Pin open</strong> on the card to keep it up while you work through several assets: it stays when the mouse leaves, when you
+      hover other tiles or scroll the list, and after each action. A pinned card is a floating panel: drag its top bar to move it and its bottom-right
+      corner to resize it. <strong>Close</strong> (or <strong>Unpin</strong>) puts it away; a new search closes it too.</p>
     <table>
       <tr><th>Field</th><th>Notes</th></tr>
       <tr><td>Size</td><td>Blank until you download or check sizes &mdash; the catalog doesn't carry file size up front.</td></tr>
@@ -386,8 +404,18 @@
         (e.g. <code>EPSG:6473/EPSG:6360</code> for NAD83(2011) Kentucky Single Zone + NAVD88 height).</td></tr>
       <tr><td>Points</td><td>LiDAR tiles only, from the catalog's own point count &mdash; not re-derived.</td></tr>
     </table>
-    <p>Check tiles directly in the list, or use <strong>Select All</strong> / <strong>Clear Selection</strong>
-      above the results. The checkbox and the tree's own row selection stay in sync either way.</p>
+    <h3>Selecting tiles</h3>
+    <p>Click a tile, or its checkbox, to toggle just that tile: pick as many as you like one after another, with no Ctrl needed.
+      <strong>Select All</strong> / <strong>Clear Selection</strong> above the results (or Ctrl+A) take or drop everything. The checkbox and the
+      row highlight always agree.</p>
+    <h3>The list and the map follow each other</h3>
+    <ul>
+      <li>Selecting tiles in the list selects their footprints on the map, as before.</li>
+      <li><strong>Hover the map</strong> over a footprint and the matching tile(s) light up in warm yellow in the list, which scrolls to the first.
+        Where footprints overlap, every tile under the pointer is tinted. Moving off the footprints, or off the map, clears it.</li>
+      <li><strong>Select footprints on the map</strong> with any QGIS Select tool (with the results layer active) and those tiles become selected in the list,
+        so Add to map, Download and the rest act on them.</li>
+    </ul>
   </section>
 
   <section id="imagery-actions">
