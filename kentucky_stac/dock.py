@@ -7,6 +7,7 @@ from .aoi import AoiState
 from .aoi_bar import AoiBar
 from .catalog import split_collections
 from .search_tab import SearchTab
+from .theme import checkbox_style
 from .sources import ApiSource, deserialize_sources, serialize_sources
 from .feedback_dialog import FeedbackDialog, open_help
 from .sources_dialog import SourcesDialog
@@ -62,6 +63,7 @@ class KentuckyStacDock(QDockWidget):
         self.tabs.addTab(self.lidar_tab, "LiDAR Pointcloud")
 
         content = QWidget()
+        content.setStyleSheet(checkbox_style())  # check boxes that stay visible in dark themes
         layout = QVBoxLayout(content)
         layout.addWidget(self.aoi_bar)
         layout.addLayout(sources_row)
