@@ -227,9 +227,11 @@
     <a href="#aoi">Area of interest</a>
     <a href="#searching">Searching</a>
     <a href="#sources">Other STAC APIs</a>
+    <a href="#logins">Sources that need a login</a>
     <a href="#results">Results list</a>
     <a href="#imagery-actions">Imagery / DEM actions</a>
     <a href="#lidar-actions">LiDAR actions</a>
+    <a href="#bands-menu">Right-click: bands &amp; indices</a>
     <a href="#export-script">Export as script</a>
     <a href="#clip">Clip to area of interest</a>
     <a href="#known-issues">Known issues</a>
@@ -254,6 +256,7 @@
       <span class="pill">MosaicJSON export</span>
       <span class="pill">Download scripts</span>
       <span class="pill">Map-linked results</span>
+      <span class="pill">Band combinations &amp; indices</span>
       <span class="pill">titiler-pgstac mosaics</span>
       <span class="pill">PDAL AOI clipping</span>
     </div>
@@ -312,6 +315,7 @@
     <ul>
       <li>Collections start <strong>unchecked</strong> &mdash; pick one or more before searching.</li>
       <li><strong>Select All</strong> / <strong>Clear Selection</strong> toggle every collection at once.</li>
+      <li><strong>Zoom to collection</strong> (under Reload) zooms the map to the area the ticked collection(s) cover, as their catalog states it; it is grayed out when nothing is ticked or the catalog gives no area.</li>
       <li><strong>Search area of interest</strong> runs the STAC search, scoped to the checked collections and the current AOI.</li>
     </ul>
     <h3>Filters</h3>
@@ -349,6 +353,7 @@
         tabs are called Imagery / DEM and LiDAR Pointcloud, and its own collections stay on their matching tab.</li>
       <li>Each source loads and searches independently: an unreachable API is reported, but doesn't stop the others.</li>
       <li>The source list is remembered between QGIS sessions.</li>
+      <li>If an API or its files need a login, set one with <strong>Login</strong>; see <a href="#logins">Sources that need a login</a>.</li>
       <li>Use the API&rsquo;s base URL, the one that answers <code>/collections</code>, not its browser documentation page
         (for example <code>https://landsatlook.usgs.gov/stac-server</code>, not <code>.../stac-server/api.html</code>).</li>
       <li>Some catalogs list tiles whose files need a login, such as USGS Landsat Look, whose files redirect to a USGS sign-in page.
@@ -378,6 +383,38 @@
       AWS access. The dialog&rsquo;s <strong>i</strong> button explains this.</p>
   </section>
 
+  <section id="logins">
+    <h2>Sources that need a login</h2>
+    <p class="lede">Some APIs, and many of the data files they point to, refuse anonymous requests: a private catalog, an
+      Earthdata or USGS account, a private S3 bucket. A source can carry one <strong>QGIS authentication configuration</strong>, which the plugin
+      then uses for that source&rsquo;s API calls and for reading and downloading its files.</p>
+    <h3>Set it up</h3>
+    <ol>
+      <li>Open <strong>Sources&hellip;</strong>. For a source you are adding, use the <strong>Login</strong> row; for one already in the list, select it
+        and press <strong>Login&hellip;</strong>.</li>
+      <li>Pick an existing configuration from QGIS&rsquo;s own selector, or press its green <strong>+</strong> to create one (QGIS asks for its master
+        password the first time). The same configurations are managed under <em>Settings &rarr; Options &rarr; Authentication</em>.</li>
+      <li>The source shows <em>(login set)</em> in the list and its collections reload with the login.</li>
+    </ol>
+    <h3>Which kind of configuration</h3>
+    <table>
+      <tr><th>You have</th><th>Use</th></tr>
+      <tr><td>An API key or token sent in a header</td><td><strong>API Header</strong> (for a bearer token: header <code>Authorization</code>, value <code>Bearer &hellip;</code>)</td></tr>
+      <tr><td>A user name and password</td><td><strong>Basic</strong></td></tr>
+      <tr><td>A single sign-on login</td><td><strong>OAuth2</strong>, set up in QGIS in the usual way</td></tr>
+      <tr><td>AWS keys for an <code>s3://</code> bucket</td><td><strong>AWS S3</strong> (a <strong>Basic</strong> configuration holding the access key ID and secret also works)</td></tr>
+    </table>
+    <h3>Where the login goes</h3>
+    <ul>
+      <li>It goes with the plugin&rsquo;s own requests to that source: collections, searches, thumbnails, file sizes and downloads.</li>
+      <li>For reading files with GDAL (adding to the map, band combinations, indices) it is given to GDAL for that file&rsquo;s own host or bucket only,
+        so another site never receives it. Passwords and keys stay in QGIS&rsquo;s encrypted Authentication database; the plugin keeps just the configuration&rsquo;s id.</li>
+      <li>A refused request says so: <em>a login was sent; check that it is the right one</em>, or <em>this source may need a login</em> when none was set.</li>
+    </ul>
+    <p>Not covered yet: point cloud (COPC) files that need a login, and certificate (PKI) configurations for reading files.
+      Credentials found in the environment or <code>~/.aws/credentials</code> are still used for <code>s3://</code> files without any setting, as before.</p>
+  </section>
+
   <section id="results">
     <h2>Results list</h2>
     <p class="lede">Each matching tile is shown as a card: a checkbox, the tile id, collection, capture date,
@@ -386,6 +423,9 @@
     <p><strong>Hover for the raw JSON.</strong> Rest the mouse on a tile for half a second and a card opens beside the
       panel with that tile&rsquo;s STAC item exactly as the catalog returned it: properties, assets, links. It stays open
       while the mouse is over the tile or the card, so you can scroll it, select and copy text, and click any URL.</p>
+    <p>Two buttons at the top left of the card choose how to read it: <strong>JSON</strong> (the default) is the item exactly as the catalog
+      returned it; <strong>HTML</strong> is a friendlier page with the tile&rsquo;s properties in a table, its assets with size, type and
+      actions, and its links, all scrollable. The choice is remembered, and the asset actions below work in both views.</p>
     <h3>Work with a tile&rsquo;s assets from the card</h3>
     <p>Under each asset&rsquo;s URL the card shows <code>[ download | copy URL | add to map ]</code>.</p>
     <ul>
@@ -427,6 +467,7 @@
       <div class="card"><h4>Export as MosaicJSON&hellip;</h4><p>Writes a <a href="https://github.com/developmentseed/mosaicjson-spec" target="_blank" rel="noopener">MosaicJSON</a> file per collection &mdash; a portable index that titiler, rio-tiler or cogeo-mosaic can read directly, with no GDAL or server round trip involved.</p></div>
       <div class="card"><h4>Add as server mosaic</h4><p>Registers a titiler-pgstac search restricted to the selected tiles and streams it &mdash; a precise crop of the statewide mosaic, with no download or local stitching.</p></div>
       <div class="card"><h4>Export as script&hellip;</h4><p>Saves a Jupyter notebook, Python script or shell script that downloads the selected tiles outside QGIS. See <a href="#export-script">Export as script</a>.</p></div>
+      <div class="card"><h4>Right-click a tile</h4><p>Add one band, a band combination (color infrared, SWIR...) or an index (NDVI, NDWI, your own formula). See <a href="#bands-menu">Right-click: bands &amp; indices</a>.</p></div>
     </div>
   </section>
 
@@ -453,6 +494,44 @@
       option makes QGIS read every point of every tile in the background, which takes longer. The options are not
       offered for <strong>Add selected as Virtual Point Cloud</strong>, which streams: the algorithm has to read
       every point, and it never finished over https.</p>
+  </section>
+
+  <section id="bands-menu">
+    <h2>Right-click: bands, combinations and indices</h2>
+    <p class="lede">Right-click a result (or a selection of results) on the Imagery / DEM or Raster tab. Besides <strong>Add to map</strong>
+      the menu offers three submenus, each applied to every selected tile that has the bands it needs. A right-click on a tile outside the
+      selection acts on that tile alone.</p>
+    <div class="card-grid">
+      <div class="card"><h4>Add as band combination</h4><p>True color, Color infrared (vegetation), Shortwave infrared, False color (urban), Agriculture, Geology and Bathymetric. Each is built from three separate band files into one layer with an automatic 2&ndash;98&nbsp;% contrast stretch.</p></div>
+      <div class="card"><h4>Add index</h4><p>NDVI, NDWI, MNDWI, NDMI, NBR, NDBI, SAVI and EVI, plus <strong>Custom formula&hellip;</strong>. Drawn red to green over &minus;1 to 1.</p></div>
+      <div class="card"><h4>Add asset (band)</h4><p>Every raster asset of the tile listed by its title, such as <em>Red - 10m (red)</em>: click one to add that band as its own layer, or choose <strong>Choose several&hellip;</strong> to tick as many bands as you like in one go (with a filter box and, optionally, one multi-band layer per tile instead of one layer per band).</p></div>
+    </div>
+    <h3>Which tiles offer what</h3>
+    <p>Bands are recognised by the catalog&rsquo;s own band names (<code>eo:bands</code> / <code>bands</code> common names such as
+      <code>red</code>, <code>nir</code>, <code>swir16</code>), or failing that by the asset&rsquo;s key. A combination or index is listed only when the tile
+      has every band it needs; with several tiles selected it shows <em>(n of m tiles)</em> when only some do, and the others are left out.
+      This suits multispectral sources such as Sentinel-2 and Landsat; a catalog that offers only a single image per tile (KyFromAbove&rsquo;s own
+      orthos, for example) just gets <strong>Add asset</strong>. The LiDAR / Point Cloud tab has no right-click menu: point clouds (LAZ and COPC) have no bands to pick from, so use the buttons under the list there.</p>
+    <h3>Choosing several bands</h3>
+    <p><strong>Add asset &rarr; Choose several&hellip;</strong> opens a list of the bands the selected tiles offer. Type in the filter box (for example
+      <code>swir</code>), tick the ones you want and press OK: each ticked band is added as its own layer for every selected tile that has it. Tick
+      <em>Combine the chosen bands into one multi-band layer</em> to get a single layer per tile instead, built from the bands in list order; exactly
+      three bands are drawn as a color image, and any other count can be restyled in Layer Properties.</p>
+    <h3>Custom formulas</h3>
+    <p><strong>Add index &rarr; Custom formula&hellip;</strong> takes a name and a formula over band names, for example
+      <code>(nir - red) / (nir + red)</code>. Use numbers, <code>+ - * / ^</code>, brackets and the functions <code>sqrt, abs, ln, log10, sin, cos, tan,
+      asin, acos, atan, min, max</code>; anything else is refused, and the dialog lists the bands the tile offers. Formulas are remembered and appear in the
+      <strong>Add index</strong> menu for the next tile; pick one in the dialog&rsquo;s <em>Saved</em> list and press <em>Delete</em> to forget it.</p>
+    <h3>How the layers are made</h3>
+    <ul>
+      <li><strong>Indices</strong> are calculated by QGIS as the map draws, straight from the remote files, using its virtual raster provider. Nothing is written
+        to disk, no GDAL add-ons are needed, and inputs at different resolutions (a 10&nbsp;m NIR band with a 20&nbsp;m SWIR band) are resampled for you. If the catalog gives a
+        reflectance scale and offset (<code>raster:bands</code>), they are applied first, which matters for ratios. Sentinel-2&rsquo;s &minus;0.1 offset can push the
+        index of very dark pixels slightly beyond the &minus;1 to 1 range.</li>
+      <li><strong>Band combinations</strong> are a small VRT file that lists the three remote bands. It is kept in your QGIS settings folder under
+        <code>kentucky_stac/vrt</code>, so a saved project keeps working.</li>
+      <li>Opening the remote files takes a few seconds, so the layer appears shortly after you choose it. Adding the same layer twice is skipped.</li>
+    </ul>
   </section>
 
   <section id="export-script">
@@ -487,6 +566,24 @@
 
   <section id="known-issues">
     <h2>Known issues</h2>
+    <h3>A tile draws in the wrong place (a coordinate system problem)</h3>
+    <p>Now and then a layer lands far from where its tile belongs, with a Utah tile showing up in northern Africa the usual example.
+      The data is fine; QGIS has just read the tile&rsquo;s coordinate system (CRS) wrongly. It tends to happen with:</p>
+    <ul>
+      <li><strong>Compound coordinate systems</strong>, a map projection plus a height datum, such as <em>NAD83 / UTM zone 12N + NAVD88 height</em>.
+        USGS 3DEP rasters and point clouds use these. When QGIS can&rsquo;t convert one, it leaves the numbers as they are, so UTM metres are read as Web Mercator metres.</li>
+      <li>A file with <strong>no coordinate system</strong> of its own, which can pick up the project&rsquo;s.</li>
+      <li>Catalogs whose tile footprint is given as a <strong>3D box</strong> (with heights) rather than a flat one.</li>
+    </ul>
+    <p>The plugin checks where each layer lands against the footprint the catalog states, and corrects it where it can: it reads the
+      horizontal coordinate system from the file itself and uses that, and a point cloud&rsquo;s height datum is left out because a map doesn&rsquo;t need it.
+      Even so, a layer can still come out wrong, especially a file with an unusual or missing CRS. If one does:</p>
+    <ol>
+      <li><strong>Remove the layer and add it again.</strong> A layer already on the map is never re-checked, so a fix only applies to layers added afterwards.</li>
+      <li>Open the layer&rsquo;s <em>Properties &rarr; Information</em> to see the CRS it carries, and compare the tile&rsquo;s footprint on the results layer.</li>
+      <li>If it is still off, set the right CRS yourself with <em>Layer &rarr; Set Layer CRS</em> (the tile&rsquo;s coordinate system is in its JSON card,
+        often as <code>proj:epsg</code> or <code>proj:code</code>), and please <a href="#feedback">report it</a> with the collection and tile name so it can be handled.</li>
+    </ol>
     <h3>"Preferred Transformation Not Available" dialog</h3>
     <p>The first time QGIS needs to reproject between Kentucky's state plane CRS and WGS84, it may show a
       dialog saying the preferred transform needs a grid file, <code>us_noaa_kyhpgn.tif</code>, that isn't
