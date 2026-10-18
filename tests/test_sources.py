@@ -153,3 +153,23 @@ def test_item_json_text_and_html():
     assert '<a href="https://x.example/a.tif?sig=1&amp;b=2">https://x.example/a.tif?sig=1&amp;b=2</a>' in page
     # An Item built by hand (no raw document) still renders from its fields.
     assert '"id": "h"' in item_json_text(Item(id="h"))
+
+
+def test_auth_cfg_is_saved_cleaned_and_looked_up():
+    from kentucky_stac.sources import ApiSource, auth_cfg_for, deserialize_sources, serialize_sources, with_auth_cfg
+
+    src = ApiSource("Private", OTHER, auth_cfg="abc1234")
+    again = deserialize_sources(serialize_sources([src]))
+    assert [s.auth_cfg for s in again if not s.is_default] == ["abc1234"]
+    # an id that isn't a plain alphanumeric (something edited in by hand) is dropped, not trusted
+    text = serialize_sources([src]).replace("abc1234", "bad id; drop")
+    assert [s.auth_cfg for s in deserialize_sources(text) if not s.is_default] == [""]
+    assert auth_cfg_for([src], OTHER + "/") == "abc1234" and auth_cfg_for([src], "https://elsewhere.org") == ""
+    cleared = with_auth_cfg([src], OTHER, "")
+    assert cleared[0].auth_cfg == "" and with_auth_cfg([DEFAULT_SOURCE], DEFAULT_SOURCE.base_uri, "x1")[0].auth_cfg == ""
+
+
+def test_add_source_takes_a_login():
+    added = add_source([DEFAULT_SOURCE], "Private", OTHER, replace=False, auth_cfg="xyz9876")
+    assert added[-1].auth_cfg == "xyz9876"
+    assert add_source([DEFAULT_SOURCE], "Private", OTHER, replace=False)[-1].auth_cfg == ""

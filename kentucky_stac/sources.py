@@ -28,6 +28,9 @@ class ApiSource:
     # Optional titiler-pgstac server backed by this API's catalog, for "Add as server mosaic".
     # The built-in source ignores it (it has its own tile server, see server_layers.tiler_url).
     tiler_url: str = ""
+    # The id of a QGIS authentication configuration (Settings > Options > Authentication) used for this
+    # API and for reading its files. Only the id is stored here: the secrets stay in QGIS's encrypted database.
+    auth_cfg: str = ""
 
 
 DEFAULT_SOURCE = ApiSource(BUILTIN_NAME, DEFAULT_BASE_URI, is_default=True)
@@ -115,7 +118,9 @@ def parse_stac_index(data: Any) -> List[CatalogEntry]:
 
 
 def serialize_sources(sources: Iterable[ApiSource]) -> str:
-    return json.dumps([{"name": s.name, "base_uri": s.base_uri, "tiler_url": s.tiler_url} for s in sources])
+    return json.dumps(
+        [{"name": s.name, "base_uri": s.base_uri, "tiler_url": s.tiler_url, "auth_cfg": s.auth_cfg} for s in sources]
+    )
 
 
 def deserialize_sources(text: Optional[str]) -> List[ApiSource]:
@@ -140,11 +145,26 @@ def deserialize_sources(text: Optional[str]) -> List[ApiSource]:
         else:
             name = str(el.get("name") or "").strip() or uri
             tiler = normalize_url(str(el.get("tiler_url") or ""))
-            sources.append(ApiSource(name, uri, tiler_url=tiler if is_valid_api_url(tiler) else ""))
+            sources.append(
+                ApiSource(
+                    name,
+                    uri,
+                    tiler_url=tiler if is_valid_api_url(tiler) else "",
+                    auth_cfg=_clean_cfg(el.get("auth_cfg")),
+                )
+            )
     return sources or [DEFAULT_SOURCE]
 
 
-def add_source(sources: List[ApiSource], name: str, url: str, replace: bool, tiler_url: str = "") -> List[ApiSource]:
+def _clean_cfg(value) -> str:
+    """A QGIS auth config id (7 letters/digits) or "" -- anything else saved by hand is dropped."""
+    text = str(value or "").strip()
+    return text if text.isalnum() and len(text) <= 32 else ""
+
+
+def add_source(
+    sources: List[ApiSource], name: str, url: str, replace: bool, tiler_url: str = "", auth_cfg: str = ""
+) -> List[ApiSource]:
     """The source list after adding (or, with replace, switching to) the API at url. Picking the
     built-in catalog's URL yields DEFAULT_SOURCE itself, not a user-named copy."""
     uri = normalize_url(url)
@@ -152,7 +172,12 @@ def add_source(sources: List[ApiSource], name: str, url: str, replace: bool, til
     new = (
         DEFAULT_SOURCE
         if is_default_uri(uri)
-        else ApiSource((name or "").strip() or uri, uri, tiler_url=tiler if is_valid_api_url(tiler) else "")
+        else ApiSource(
+            (name or "").strip() or uri,
+            uri,
+            tiler_url=tiler if is_valid_api_url(tiler) else "",
+            auth_cfg=_clean_cfg(auth_cfg),
+        )
     )
     if replace:
         return [new]
@@ -186,4 +211,24 @@ def tiler_for(sources: Iterable[ApiSource], base_uri: str) -> str:
     for s in sources:
         if not s.is_default and normalize_url(s.base_uri).lower() == uri:
             return s.tiler_url
+    return ""
+
+
+def with_auth_cfg(sources: Iterable[ApiSource], base_uri: str, auth_cfg: str) -> List[ApiSource]:
+    """The source list with one source's authentication config set (or cleared, with ""). The built-in
+    source is never changed."""
+    uri = normalize_url(base_uri).lower()
+    cfg = _clean_cfg(auth_cfg)
+    return [
+        replace(s, auth_cfg=cfg) if not s.is_default and normalize_url(s.base_uri).lower() == uri else s
+        for s in sources
+    ]
+
+
+def auth_cfg_for(sources: Iterable[ApiSource], base_uri: str) -> str:
+    """The authentication config id set for a source, or "" if none."""
+    uri = normalize_url(base_uri).lower()
+    for s in sources:
+        if normalize_url(s.base_uri).lower() == uri:
+            return s.auth_cfg
     return ""

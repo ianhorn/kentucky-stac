@@ -17,7 +17,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Union
+from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Tuple, Union
 
 from .models import Collection, Item, ItemCollection, Link
 
@@ -134,7 +134,8 @@ class StacClient:
         return self.base_uri.rstrip("/")
 
     def _request(self, method: str, url: str, body: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        headers = {"Accept": "application/json", "User-Agent": USER_AGENT}
+        # Some servers (FedEO) refuse a bare application/json Accept with a 415, so geo+json is offered too.
+        headers = {"Accept": "application/geo+json, application/json", "User-Agent": USER_AGENT}
         data = None
         if body is not None:
             data = json.dumps(body).encode("utf-8")
@@ -147,6 +148,21 @@ class StacClient:
         except ValueError as e:
             raise StacError(f"STAC API returned invalid JSON from {url}") from e
 
+    def child_catalogs(self, limit: int = 12) -> List[Tuple[str, str]]:
+        """(title, URL) of the catalogs listed under this address's root document (rel="child" links).
+
+        A catalog of catalogs, such as NASA's CMR STAC root, has no collections of its own: each child is a
+        provider's own STAC API. Returns [] if the root can't be read or has no children."""
+        try:
+            data = self._request("GET", self._root)
+        except StacError:
+            return []
+        found = []
+        for link in data.get("links") or []:
+            if link.get("rel") == "child" and link.get("href"):
+                found.append((str(link.get("title") or link.get("href")), str(link["href"])))
+        return found[:limit]
+
     def collections(self, max_pages: int = 20) -> List[Collection]:
         """Every collection, following rel="next" links -- KyFromAbove returns them all at once,
         but some STAC APIs paginate /collections. max_pages guards against a server whose next
@@ -154,11 +170,18 @@ class StacClient:
         url: Optional[str] = f"{self._root}/collections"
         found: List[Collection] = []
         seen = set()
+        self.partial_error: Optional[str] = None
         for _ in range(max_pages):
             if not url or url in seen:
                 break
             seen.add(url)
-            data = self._request("GET", url)
+            try:
+                data = self._request("GET", url)
+            except StacError as e:
+                if not found:
+                    raise
+                self.partial_error = str(e)  # keep the pages already loaded rather than losing them all
+                break
             found.extend(Collection.from_dict(c) for c in data.get("collections") or [])
             url = next((link.get("href") for link in data.get("links") or [] if link.get("rel") == "next"), None)
         return found

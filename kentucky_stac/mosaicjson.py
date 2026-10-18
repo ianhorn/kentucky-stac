@@ -20,7 +20,7 @@ import re
 from dataclasses import dataclass
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
-from .catalog import primary_asset
+from .catalog import bbox_2d, primary_asset
 from .stac import Item
 
 MOSAICJSON_VERSION = "0.0.2"
@@ -134,7 +134,7 @@ def build_mosaicjson(spec: MosaicJsonSpec, gsd_meters_for: Callable[[Item], Opti
         asset = primary_asset(item, lidar=False)
         if asset is None or not asset.href or not item.bbox or len(item.bbox) < 4:
             continue
-        entries.append((tuple(float(v) for v in item.bbox[:4]), asset.href, gsd_meters_for(item)))
+        entries.append((bbox_2d(item.bbox), asset.href, gsd_meters_for(item)))
     if not entries:
         return None
 

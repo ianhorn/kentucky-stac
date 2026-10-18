@@ -18,8 +18,8 @@ from qgis.core import QgsApplication, QgsBlockingNetworkRequest, QgsFileDownload
 from qgis.PyQt.QtCore import QObject, QTimer, QUrl, pyqtSignal
 from qgis.PyQt.QtNetwork import QNetworkRequest
 
-from . import s3, signing
-from .catalog import primary_asset
+from . import auth, s3, signing
+from .catalog import bbox_2d, primary_asset
 from .gdal_setup import setup_gdal
 from .stac import Item
 
@@ -44,6 +44,7 @@ class DownloadJob:
     dest: str  # final path; written as dest + ".part" and renamed when complete
     bbox: Optional[Tuple[float, float, float, float]] = None  # the tile's lon/lat footprint from the catalog
     item: Optional[Item] = None  # the originating STAC item, for building a combined VPC afterward
+    authcfg: str = ""  # the QGIS authentication configuration of the tile's source ("" for none)
 
 
 def filename_from_href(href: str) -> str:
@@ -62,8 +63,10 @@ def plan_downloads(items: Iterable[Item], lidar: bool, folder: str) -> Tuple[Lis
             missing.append(item)
             continue
         dest = os.path.join(folder, filename_from_href(asset.href))
-        bbox = tuple(float(v) for v in item.bbox[:4]) if item.bbox and len(item.bbox) >= 4 else None
-        jobs.setdefault(dest, DownloadJob(item.id, asset.href, dest, bbox, item))
+        bbox = bbox_2d(item.bbox)
+        cfg = auth.cfg_for_source(item.source)
+        auth.prepare_asset(asset.href, cfg)  # GDAL (file sizes, s3 downloads) gets the login for this file's host
+        jobs.setdefault(dest, DownloadJob(item.id, asset.href, dest, bbox, item, cfg))
     return list(jobs.values()), missing
 
 
@@ -97,9 +100,9 @@ def _signed_size(url: str) -> Optional[int]:
         gdal.SetThreadLocalConfigOption("AWS_REQUEST_PAYER", None)
 
 
-def head_size(url: str) -> Optional[int]:
+def head_size(url: str, authcfg: str = "") -> Optional[int]:
     """Content-Length from a HEAD request, or None. Safe to call from worker threads."""
-    if s3.is_s3(url) and s3.credentials_available():
+    if s3.is_s3(url) and (authcfg or s3.credentials_available()):
         try:
             return _signed_size(url)
         except Exception:
@@ -107,6 +110,8 @@ def head_size(url: str) -> Optional[int]:
     url = signing.fetchable_url(url)  # s3:// -> https, Azure blob -> signed
     try:
         blocking = QgsBlockingNetworkRequest()
+        if authcfg:
+            blocking.setAuthCfg(authcfg)
         error = blocking.head(QNetworkRequest(QUrl(url)))
         if int(getattr(error, "value", error)) != 0:
             return None
@@ -120,15 +125,21 @@ class SizesTask(QgsTask):
     """Look up file sizes for a set of URLs. `callback({url: size or None})` runs on the main
     thread unless the task was cancelled."""
 
-    def __init__(self, urls: List[str], callback: Callable[[Dict[str, Optional[int]]], None]):
+    def __init__(
+        self,
+        urls: List[str],
+        callback: Callable[[Dict[str, Optional[int]]], None],
+        authcfgs: Optional[Dict[str, str]] = None,
+    ):
         super().__init__(f"Checking size of {len(urls)} file{'s' if len(urls) != 1 else ''}")
         self._urls = urls
+        self._authcfgs = authcfgs or {}
         self._callback = callback
         self.sizes: Dict[str, Optional[int]] = {}
 
     def run(self) -> bool:
         with ThreadPoolExecutor(max_workers=SIZE_LOOKUP_WORKERS) as pool:
-            for url, size in zip(self._urls, pool.map(head_size, self._urls)):
+            for url, size in zip(self._urls, pool.map(lambda u: head_size(u, self._authcfgs.get(u, "")), self._urls)):
                 self.sizes[url] = size
                 self.setProgress(100.0 * len(self.sizes) / len(self._urls))
                 if self.isCanceled():
@@ -259,10 +270,10 @@ class DownloadManager(QObject):
             self._failed.append((job.name, str(e)))
             return
         self._active.append(state)
-        if s3.is_s3(job.url) and s3.credentials_available():
+        if s3.is_s3(job.url) and (job.authcfg or s3.credentials_available()):
             self._start_signed(state, part)
             return
-        downloader = QgsFileDownloader(QUrl(signing.fetchable_url(job.url)), part, "", True)
+        downloader = QgsFileDownloader(QUrl(signing.fetchable_url(job.url)), part, job.authcfg, True)
         # The manager owns the downloader (Qt parent) and keeps the Python wrapper alive. Letting the
         # wrapper be garbage-collected from inside the downloader's own downloadExited signal frees
         # the C++ object mid-emit and crashes QGIS.

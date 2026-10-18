@@ -3,14 +3,33 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import replace
 from typing import Callable, List, Optional, Sequence, Tuple
 
 from qgis.core import QgsTask
 
-from .qgis_transport import qgis_transport
+from . import auth
+from .qgis_transport import qgis_transport, transport_for
 from .sources import STAC_INDEX_URL, ApiSource, CatalogEntry, parse_stac_index
 from .stac import Collection, Item, SearchQuery, StacClient, StacError, query_variants, within_cloud
+
+
+def _with_hint(client: StacClient, message: str) -> str:
+    """The error, plus -- when the address turns out to be a catalog of catalogs -- the catalogs to use instead."""
+    try:
+        children = client.child_catalogs()
+    except Exception:
+        return message
+    if not children:
+        return message
+    message = re.sub(r" \(this source may need a login[^)]*\)", "", message)  # the real cause is the address
+    listed = "; ".join(f"{title}: {href}" for title, href in children[:4])
+    more = f" (and {len(children) - 4} more)" if len(children) > 4 else ""
+    return (
+        f"{message} -- this address is a catalog of catalogs, not a STAC API with collections of its own. "
+        f"Add one of its catalogs as a source instead, for example {listed}{more}"
+    )
 
 
 class CollectionsTask(QgsTask):
@@ -32,10 +51,15 @@ class CollectionsTask(QgsTask):
             if self.isCanceled():
                 return False
             try:
-                found = StacClient(source.base_uri, qgis_transport).collections()
+                client = StacClient(source.base_uri, transport_for(auth.cfg_for_source(source.base_uri)))
+                found = client.collections()
                 self.collections.extend(replace(c, source=source.base_uri) for c in found)
+                if getattr(client, "partial_error", None):
+                    self.errors.append(
+                        (source.name, f"only the first {len(found)} collections loaded: {client.partial_error}")
+                    )
             except Exception as e:  # report any failure to the UI instead of losing it in the thread
-                self.errors.append((source.name, str(e)))
+                self.errors.append((source.name, _with_hint(client, str(e))))
         return True
 
     def finished(self, result: bool) -> None:
@@ -127,7 +151,7 @@ class SearchTask(QgsTask):
 
     def _search_one(self, base_uri: str, collection_ids: List[str]) -> Tuple[List[Item], Optional[int], bool]:
         base = replace(self._query, collections=list(collection_ids))
-        client = StacClient(base_uri, qgis_transport)
+        client = StacClient(base_uri, transport_for(auth.cfg_for_source(base_uri)))
         name = self._names.get(base_uri, base_uri)
         # A big page can overflow a server's response limit (Earth Search answers 502 for 500 Sentinel-2
         # items), so on a server error the page size is halved and the search tried again.

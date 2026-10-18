@@ -3,6 +3,7 @@ from typing import List, Optional, Tuple
 from qgis.core import Qgis, QgsApplication, QgsSettings
 from qgis.PyQt.QtWidgets import QDialog, QDockWidget, QHBoxLayout, QLabel, QPushButton, QTabWidget, QVBoxLayout, QWidget
 
+from . import auth
 from .aoi import AoiState
 from .aoi_bar import AoiBar
 from .catalog import split_collections
@@ -23,6 +24,7 @@ class KentuckyStacDock(QDockWidget):
         self.setObjectName("KentuckyStacDock")
         self.iface = iface
         self.sources: List[ApiSource] = deserialize_sources(QgsSettings().value(SOURCES_SETTINGS_KEY, ""))
+        auth.set_sources(self.sources)
         self._task: Optional[CollectionsTask] = None
         self._loaded = False
 
@@ -107,9 +109,10 @@ class KentuckyStacDock(QDockWidget):
     def set_sources(self, sources: List[ApiSource]):
         if sources == self.sources:
             return
-        # A tile server URL change alone doesn't need the collections fetched again.
-        reload = [(s.name, s.base_uri) for s in sources] != [(s.name, s.base_uri) for s in self.sources]
+        # A tile server URL change alone doesn't need the collections fetched again; a login does.
+        reload = [(s.name, s.base_uri, s.auth_cfg) for s in sources] != [(s.name, s.base_uri, s.auth_cfg) for s in self.sources]
         self.sources = list(sources)
+        auth.set_sources(self.sources)
         QgsSettings().setValue(SOURCES_SETTINGS_KEY, serialize_sources(self.sources))
         self._update_sources_label()
         for tab in (self.imagery_tab, self.lidar_tab):

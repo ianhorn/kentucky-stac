@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import List, Optional
 
 from qgis.core import QgsApplication
+from qgis.gui import QgsAuthConfigSelect
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import (
     QComboBox,
@@ -31,6 +32,7 @@ from .sources import (
     add_source,
     is_valid_api_url,
     normalize_url,
+    with_auth_cfg,
     with_tiler_url,
 )
 from .tasks import StacIndexTask
@@ -169,7 +171,14 @@ class SourcesDialog(QDialog):
             "Experimental: set the titiler / titiler-pgstac server used for \"Add as server mosaic\" with the selected source's tiles"
         )
         self.tiler_button.clicked.connect(self._edit_tiler)
+        self.login_button = QPushButton("Login...")
+        self.login_button.setToolTip(
+            "Choose the QGIS authentication configuration (Basic, API key, Bearer/OAuth2, AWS S3...) this source "
+            "needs, for its API and for reading its files"
+        )
+        self.login_button.clicked.connect(self._edit_login)
         side_buttons = QVBoxLayout()
+        side_buttons.addWidget(self.login_button)
         side_buttons.addWidget(self.tiler_button)
         side_buttons.addWidget(self.remove_button)
         side_buttons.addStretch(1)
@@ -193,11 +202,16 @@ class SourcesDialog(QDialog):
         self.tiler_edit = QLineEdit()
         self.tiler_edit.setPlaceholderText("Your own titiler / titiler-pgstac URL (needed for \"Add as server mosaic\")")
 
+        # QGIS's own picker for an authentication configuration: choose an existing one or make a new one.
+        # Only its id is kept; the secret stays in QGIS's encrypted Authentication database.
+        self.auth_select = QgsAuthConfigSelect(self)
+
         form = QFormLayout()
         form.addRow("STAC Index", self.catalog_combo)
         form.addRow("Name", self.name_edit)
         form.addRow("API base URL", self.url_edit)
         form.addRow("Your titiler", self.tiler_edit)
+        form.addRow("Login", self.auth_select)
 
         self.add_button = QPushButton("Add")
         self.add_button.setToolTip("Keep the current source(s) and search this one alongside them")
@@ -242,6 +256,8 @@ class SourcesDialog(QDialog):
             label = f"{s.name}  (built-in)" if s.is_default else s.name
             if s.tiler_url:
                 label += "  (tile server set)"
+            if s.auth_cfg:
+                label += "  (login set)"
             item = QListWidgetItem(label)
             item.setToolTip(s.base_uri)
             self.source_list.addItem(item)
@@ -252,6 +268,7 @@ class SourcesDialog(QDialog):
         editable = 0 <= row < len(self._sources) and not self._sources[row].is_default
         self.remove_button.setEnabled(editable)
         self.tiler_button.setEnabled(editable)
+        self.login_button.setEnabled(editable)
 
     def _remove_selected(self):
         row = self.source_list.currentRow()
@@ -268,6 +285,35 @@ class SourcesDialog(QDialog):
         if url is None:
             return
         self._sources = with_tiler_url(self._sources, source.base_uri, url)
+        self._refresh_list()
+        self.source_list.setCurrentRow(row)
+
+    def _edit_login(self):
+        row = self.source_list.currentRow()
+        if not (0 <= row < len(self._sources)) or self._sources[row].is_default:
+            return
+        source = self._sources[row]
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Login for {source.name}")
+        dialog.setMinimumWidth(420)
+        select = QgsAuthConfigSelect(dialog)
+        select.setConfigId(source.auth_cfg)
+        note = QLabel(
+            "Pick the QGIS authentication configuration this source needs, or create one with the green plus. "
+            "It is used for the API and for reading and downloading this source's files, only for that "
+            "source's own hosts. Choose \"No Authentication\" to remove it."
+        )
+        note.setWordWrap(True)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(note)
+        layout.addWidget(select)
+        layout.addWidget(buttons)
+        if not dialog.exec():
+            return
+        self._sources = with_auth_cfg(self._sources, source.base_uri, select.configId())
         self._refresh_list()
         self.source_list.setCurrentRow(row)
 
@@ -312,7 +358,7 @@ class SourcesDialog(QDialog):
             self.error_label.setVisible(True)
             return
         before = len(self._sources)
-        self._sources = add_source(self._sources, self.name_edit.text(), url, replace, tiler)
+        self._sources = add_source(self._sources, self.name_edit.text(), url, replace, tiler, self.auth_select.configId())
         if not replace and len(self._sources) == before:
             self.error_label.setText("That source is already active.")
             self.error_label.setVisible(True)
@@ -321,6 +367,7 @@ class SourcesDialog(QDialog):
         self.name_edit.clear()
         self.url_edit.clear()
         self.tiler_edit.clear()
+        self.auth_select.setConfigId("")
         self.catalog_combo.setCurrentIndex(0)
         self._refresh_list()
 

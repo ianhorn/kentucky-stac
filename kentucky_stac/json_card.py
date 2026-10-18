@@ -8,11 +8,13 @@ from __future__ import annotations
 
 from typing import Callable, Dict, Optional
 
+from qgis.core import QgsSettings
 from qgis.PyQt.QtCore import QEvent, QObject, QPoint, QRect, Qt, QTimer, QUrl, pyqtSignal
 from qgis.PyQt.QtGui import QDesktopServices, QGuiApplication, QTextOption
 from qgis.PyQt.QtWidgets import (
     QDockWidget,
     QFrame,
+    QButtonGroup,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -72,6 +74,7 @@ class JsonCard(QFrame):
 
     pin_toggled = pyqtSignal(bool)
     close_requested = pyqtSignal()
+    view_changed = pyqtSignal(str)  # "json" or "html"
 
     def __init__(self, parent: QWidget):
         super().__init__(parent, Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint)
@@ -92,12 +95,27 @@ class JsonCard(QFrame):
         self.close_button = QPushButton("Close")
         self.close_button.setVisible(False)
         self.close_button.clicked.connect(self.close_requested)
+        # The two ways to read the item, top left: its raw JSON (the default) or a friendlier page.
+        self.json_button = QPushButton("JSON")
+        self.html_button = QPushButton("HTML")
+        self.json_button.setToolTip("The item exactly as the catalog returned it")
+        self.html_button.setToolTip("A readable page: properties, assets and links")
+        group = QButtonGroup(self)
+        group.setExclusive(True)
+        for button in (self.json_button, self.html_button):
+            button.setCheckable(True)
+            group.addButton(button)
+        self.json_button.setChecked(True)
+        self.json_button.toggled.connect(lambda on: self.view_changed.emit("json") if on else None)
+        self.html_button.toggled.connect(lambda on: self.view_changed.emit("html") if on else None)
         self.drag_hint = QLabel("Drag here to move")
         self.drag_hint.setStyleSheet("color: gray;")
         self.drag_hint.setVisible(False)
         self.drag_bar = _DragBar(self)
         bar = QHBoxLayout(self.drag_bar)
         bar.setContentsMargins(4, 3, 4, 0)
+        bar.addWidget(self.json_button)
+        bar.addWidget(self.html_button)
         bar.addWidget(self.drag_hint)
         bar.addStretch(1)
         bar.addWidget(self.pin_button)
@@ -114,6 +132,12 @@ class JsonCard(QFrame):
         grip_row.addWidget(self.size_grip)
         layout.addLayout(grip_row)
 
+    def view(self) -> str:
+        return "html" if self.html_button.isChecked() else "json"
+
+    def set_view(self, mode: str) -> None:
+        (self.html_button if mode == "html" else self.json_button).setChecked(True)
+
     def is_pinned(self) -> bool:
         return self.pin_button.isChecked()
 
@@ -128,11 +152,12 @@ class JsonCard(QFrame):
     def set_pinned(self, on: bool) -> None:
         self.pin_button.setChecked(on)
 
-    def set_json_html(self, html: str) -> None:
+    def set_json_html(self, html: str, resize: bool = True) -> None:
         self.browser.setHtml(html)
-        self.browser.document().setTextWidth(CARD_WIDTH - 24)
-        height = int(self.browser.document().size().height()) + 18 + self.pin_button.sizeHint().height() + 6 + 4
-        self.resize(CARD_WIDTH, min(height, CARD_MAX_HEIGHT))
+        if resize:
+            self.browser.document().setTextWidth(CARD_WIDTH - 24)
+            height = int(self.browser.document().size().height()) + 18 + self.pin_button.sizeHint().height() + 6 + 4
+            self.resize(CARD_WIDTH, min(height, CARD_MAX_HEIGHT))
         self.browser.verticalScrollBar().setValue(0)
 
 
@@ -145,7 +170,7 @@ class ItemJsonHover(QObject):
 
     asset_action = pyqtSignal(int, str, str)  # result row, action ("download" / "copy" / "map"), asset key
 
-    def __init__(self, tree: QTreeWidget, html_for_row: Callable[[int], Optional[str]], parent: Optional[QObject] = None):
+    def __init__(self, tree: QTreeWidget, html_for_row: Callable[[int, str], Optional[str]], parent: Optional[QObject] = None):
         super().__init__(parent or tree)
         self._tree = tree
         self._html_for_row = html_for_row
@@ -157,6 +182,8 @@ class ItemJsonHover(QObject):
         self._card.browser.viewport().installEventFilter(self)
         self._card.browser.anchorClicked.connect(self._on_link)
         self._card.pin_toggled.connect(self._on_pin)
+        self._card.set_view("html" if str(QgsSettings().value("kentucky_stac/card_view", "json")) == "html" else "json")
+        self._card.view_changed.connect(self._on_view)
         self._card.close_requested.connect(lambda: self.hide_now(force=True))
         self._pinned = False
         self._show_timer = QTimer(self, singleShot=True, interval=SHOW_DELAY_MS)
@@ -184,6 +211,14 @@ class ItemJsonHover(QObject):
         """Forget every watched row (call when the result list is rebuilt)."""
         self.hide_now(force=True)
         self._rows.clear()
+
+    def _on_view(self, mode: str) -> None:
+        """JSON or HTML was chosen: remember it and redraw the open card (keeping its size once pinned)."""
+        QgsSettings().setValue("kentucky_stac/card_view", mode)
+        if self._open_row is not None:
+            html = self._html_for_row(self._open_row, mode)
+            if html:
+                self._card.set_json_html(html, resize=not self._pinned)
 
     def _on_pin(self, on: bool) -> None:
         self._pinned = on
@@ -278,7 +313,7 @@ class ItemJsonHover(QObject):
         row, self._pending = self._pending, None
         if row is None or self._pinned:
             return
-        html = self._html_for_row(row)
+        html = self._html_for_row(row, self._card.view())
         if not html:
             return
         self._card.set_json_html(html)

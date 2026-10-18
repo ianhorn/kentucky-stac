@@ -25,9 +25,10 @@ from qgis.PyQt.QtGui import QBrush, QColor
 from qgis.PyQt.QtWidgets import QAbstractItemView, QTreeWidget
 
 from .results_layer import KIND_PROPERTY, geojson_to_geometry
+from .theme import mix_colors
 from .stac import Item
 
-_HOVER_COLOR = QColor(255, 228, 140)  # warm yellow: distinct from the selection blue
+_HOVER_SHARE = 0.5  # how much of the theme's highlight colour is mixed into the list's background
 _MIN_INTERVAL = 0.03  # seconds between hover lookups while the mouse moves
 WGS84 = "EPSG:4326"
 
@@ -170,11 +171,17 @@ class MapResultsLink(QObject):
             return
         self._paint(self._hovered, None)
         self._hovered = rows
-        self._paint(rows, QBrush(_HOVER_COLOR))
+        self._paint(rows, QBrush(self._hover_color()))
         if rows:
             item = self._tree.topLevelItem(rows[0])
             if item is not None:
                 self._tree.scrollToItem(item, QAbstractItemView.ScrollHint.EnsureVisible)
+
+    def _hover_color(self) -> QColor:
+        """A tint of the theme's own highlight colour over the list background: clearly different from an
+        untinted row, yet the text keeps its normal contrast in both light and dark themes."""
+        palette = self._tree.palette()
+        return mix_colors(palette.highlight().color(), palette.base().color(), _HOVER_SHARE)
 
     def _paint(self, rows: List[int], brush: Optional[QBrush]) -> None:
         for row in rows:

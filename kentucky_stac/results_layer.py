@@ -14,7 +14,7 @@ from qgis.core import (
     QgsVectorLayer,
 )
 
-from .catalog import format_size, primary_asset
+from .catalog import bbox_2d, format_size, primary_asset
 from .stac import Item
 
 KIND_PROPERTY = "kentucky_stac/results_kind"
@@ -33,7 +33,8 @@ def geojson_to_geometry(geometry: Optional[Dict[str, Any]], bbox: Optional[Seque
         if kind == "MultiPolygon" and coords:
             return QgsGeometry.fromMultiPolygonXY([[ring(r) for r in poly] for poly in coords])
     if bbox and len(bbox) >= 4:
-        return QgsGeometry.fromRect(QgsRectangle(bbox[0], bbox[1], bbox[2], bbox[3]))
+        flat = bbox_2d(bbox)
+        return QgsGeometry.fromRect(QgsRectangle(*flat)) if flat else None
     return None
 
 

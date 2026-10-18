@@ -51,6 +51,17 @@ def split_collections(collections: Iterable[Collection]) -> Tuple[List[Collectio
 _RASTER_SUFFIXES = (".tif", ".tiff", ".jp2", ".vrt")
 
 
+def bbox_2d(bbox) -> Optional[Tuple[float, float, float, float]]:
+    """(minx, miny, maxx, maxy) of a STAC bbox. A 3D bbox lists [minx, miny, minz, maxx, maxy, maxz]; taking its
+    first four numbers would use the minimum height as a longitude (3DEP point clouds do this)."""
+    if not bbox:
+        return None
+    values = [float(v) for v in bbox]
+    if len(values) >= 6:
+        return values[0], values[1], values[3], values[4]
+    return (values[0], values[1], values[2], values[3]) if len(values) >= 4 else None
+
+
 def is_raster_asset(asset: Asset) -> bool:
     """Whether an asset is an image GDAL can open as a map layer (a GeoTIFF or JPEG 2000 file)."""
     path = urllib.parse.urlparse(asset.href or "").path.lower()

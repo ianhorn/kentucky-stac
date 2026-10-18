@@ -7,8 +7,10 @@ from qgis.core import (
     Qgis,
     QgsApplication,
     QgsCoordinateReferenceSystem,
+    QgsCoordinateTransform,
     QgsNetworkAccessManager,
     QgsProject,
+    QgsRectangle,
     QgsSettings,
     QgsUnitTypes,
 )
@@ -35,7 +37,7 @@ from qgis.PyQt.QtWidgets import (
 )
 
 from .aoi import AoiState, wkt_parts
-from .catalog import format_size, primary_asset, thumbnail_href
+from .catalog import bbox_2d, format_size, primary_asset, thumbnail_href
 from .downloads import (
     MAX_DOWNLOAD_CONCURRENCY,
     MIN_DOWNLOAD_CONCURRENCY,
@@ -46,10 +48,14 @@ from .downloads import (
     filename_from_href,
     plan_downloads,
 )
-from . import azure, signing
+from . import auth, azure, signing
 from .filters_panel import FiltersPanel
-from .item_json import item_json_text, json_to_html
+from .item_json import item_json_text, item_to_friendly_html, json_to_html
 from .json_card import ItemJsonHover
+from .assets_dialog import AssetsDialog
+from .band_layers import combination_spec, index_spec, stack_spec
+from .bands import COMBINATIONS, INDICES, Band, available_combinations, available_indices, item_bands
+from .index_dialog import IndexDialog, saved_formulas
 from .map_link import MapResultsLink
 from .layers import (
     AddLayersTask,
@@ -284,6 +290,10 @@ class SearchTab(QWidget):
         self.reload_button.setToolTip("Reload the collection list from the STAC API")
         self.reload_button.setEnabled(False)
         self.reload_button.clicked.connect(self.reload_requested)
+        self.zoom_button = QPushButton("Zoom to collection")
+        self.zoom_button.setToolTip("Zoom the map to the area the ticked collection(s) cover")
+        self.zoom_button.setEnabled(False)
+        self.zoom_button.clicked.connect(self.zoom_to_collections)
         self.status = QLabel()
         self.status.setWordWrap(True)
 
@@ -317,8 +327,14 @@ class SearchTab(QWidget):
         # Resting the mouse on a row opens a card with that tile's raw STAC JSON.
         self._json_hover = ItemJsonHover(self.tree, self._json_html_for_row, self)
         # The results footprints on the map and this list follow each other (see map_link.py).
+        self._canvas = canvas
         self._link = MapResultsLink(canvas, self.tree, kind, self._after_map_selection, self)
         self._json_hover.asset_action.connect(self._on_asset_action)
+        if not self._lidar:
+            # Band combinations, indices and single bands only make sense for raster tiles; a point cloud
+            # (LAZ/COPC) has none of that, so the Point Cloud tab has no right-click menu at all.
+            self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            self.tree.customContextMenuRequested.connect(self._show_context_menu)
         self._single_asset_download = False  # set while a download started from the JSON card runs
         self._thumb_replies: List[QNetworkReply] = []
 
@@ -422,6 +438,7 @@ class SearchTab(QWidget):
         collection_buttons.addWidget(self.select_all_button)
         collection_buttons.addWidget(self.clear_selection_button)
         collection_buttons.addWidget(self.reload_button)
+        collection_buttons.addWidget(self.zoom_button)
         collection_buttons.addStretch(1)
         row = QHBoxLayout()
         row.addWidget(self.list, 1)
@@ -575,7 +592,47 @@ class SearchTab(QWidget):
     def _aoi_is_polygon(self) -> bool:
         return self._aoi.has_aoi and self._aoi.geometry.type() == Qgis.GeometryType.Polygon
 
+    def _collection_extent(self):
+        """(minx, miny, maxx, maxy) in lon/lat covering every ticked collection that states its extent, or None."""
+        boxes = [bbox_2d(c.bbox) for c in self.selected_collections() if c.bbox]
+        boxes = [b for b in boxes if b is not None]
+        if not boxes:
+            return None
+        return (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
+
+    def _update_zoom_enabled(self):
+        ticked = bool(self.selected_collection_ids())
+        self.zoom_button.setEnabled(self._canvas is not None and self._collection_extent() is not None)
+        self.zoom_button.setToolTip(
+            "Zoom the map to the area the ticked collection(s) cover"
+            if not ticked or self._collection_extent() is not None
+            else "The ticked collection(s) don't state the area they cover"
+        )
+
+    def zoom_to_collections(self):
+        """Zoom the map to the extent of the ticked collection(s), as their catalog gives it."""
+        extent = self._collection_extent()
+        if extent is None or self._canvas is None:
+            return
+        # Web Mercator can't hold the poles, and a "whole world" extent is common: keep inside +-85 degrees.
+        west, south, east, north = max(extent[0], -180.0), max(extent[1], -85.0), min(extent[2], 180.0), min(extent[3], 85.0)
+        rect = QgsRectangle(west, south, east, north)
+        try:
+            transform = QgsCoordinateTransform(
+                QgsCoordinateReferenceSystem("EPSG:4326"), self._canvas.mapSettings().destinationCrs(), QgsProject.instance()
+            )
+            rect = transform.transformBoundingBox(rect)
+        except Exception as e:
+            self._warn(f"Could not zoom to the collection: {e}")
+            return
+        if rect.isEmpty():
+            rect.grow(0.01)
+        rect.scale(1.1)  # a little margin
+        self._canvas.setExtent(rect)
+        self._canvas.refresh()
+
     def _update_search_enabled(self):
+        self._update_zoom_enabled()
         polygon = self._aoi_is_polygon()
         self.clip_to_aoi.setEnabled(polygon)
         # Only applies to the download/mosaic flows -- streaming "Add selected to map" reads tiles
@@ -721,6 +778,128 @@ class SearchTab(QWidget):
         self._set_results_message(text)
         self._update_search_enabled()
 
+    # ---- right-click menu: add by band, band combination or index -------------------------------
+
+    def _show_context_menu(self, pos):
+        row = self.tree.itemAt(pos)
+        if row is None:
+            return
+        if not row.isSelected():  # right-clicking a tile outside the selection acts on that tile alone
+            self.tree.clearSelection()
+            row.setSelected(True)
+        items = self.selected_items()
+        if not items:
+            return
+        bands = {id(i): item_bands(i) for i in items}
+        custom = saved_formulas()
+        menu = QMenu(self.tree)
+        menu.addAction("Add to map").triggered.connect(self.add_to_map)
+        if not any(bands[id(i)] for i in items):  # point clouds and the like have no bands to pick from
+            menu.exec(self.tree.viewport().mapToGlobal(pos))
+            return
+
+        def count_note(n: int) -> str:
+            return "" if n == len(items) else f"  ({n} of {len(items)} tiles)"
+
+        def submenu(title: str, entries: List[tuple]) -> None:
+            sub = menu.addMenu(title)
+            if not entries:
+                sub.setEnabled(False)
+            for label, callback in entries:
+                sub.addAction(label).triggered.connect(callback)
+
+        combos = []
+        for name in COMBINATIONS:
+            have = [i for i in items if name in available_combinations(bands[id(i)])]
+            if have:
+                combos.append((name + count_note(len(have)), lambda _c=False, n=name, h=have: self._add_combination(n, h, bands)))
+        submenu("Add as band combination", combos)
+
+        formulas = dict(INDICES)
+        formulas.update(custom)
+        indices = []
+        for name, formula in formulas.items():
+            have = [i for i in items if name in available_indices(bands[id(i)], {name: formula})]
+            if have:
+                indices.append((name + count_note(len(have)), lambda _c=False, n=name, f=formula, h=have: self._add_index(n, f, h, bands)))
+        indices.append(("Custom formula...", lambda _c=False: self._custom_index(items, bands)))
+        submenu("Add index", indices)
+
+        assets: dict = {}
+        for tile in items:
+            for band in bands[id(tile)]:
+                assets.setdefault(band.asset, (band.label.split(":")[0], []))[1].append(tile)
+        asset_entries = [
+            (f"{title} ({key})" + count_note(len(tiles)), lambda _c=False, k=key, t=tiles: self._add_asset(k, t))
+            for key, (title, tiles) in assets.items()
+        ]
+        asset_menu = menu.addMenu("Add asset (band)")
+        asset_menu.addAction("Choose several...").triggered.connect(
+            lambda _c=False: self._choose_assets(items, bands, {k: v[0] for k, v in assets.items()})
+        )
+        asset_menu.addSeparator()
+        for label, callback in asset_entries:
+            asset_menu.addAction(label).triggered.connect(callback)
+        menu.exec(self.tree.viewport().mapToGlobal(pos))
+
+    def _add_layers_from(self, specs: list, label: str, skipped: int):
+        if self._busy():
+            self._warn("Wait for the current task to finish first.")
+            return
+        duplicates = already_on_map(specs)
+        specs = [s for s in specs if s not in duplicates]
+        notes = []
+        if skipped:
+            notes.append(f"{skipped} tile{'s' if skipped != 1 else ''} without those bands left out")
+        if duplicates:
+            notes.append(f"{len(duplicates)} already on the map")
+        if not specs:
+            self._info("Nothing to add: " + "; ".join(notes) + "." if notes else "Nothing to add.")
+            return
+        self._run_add(specs, notes)
+
+    def _add_combination(self, name: str, items: list, bands: dict):
+        specs = [s for s in (combination_spec(i, name, bands[id(i)]) for i in items) if s is not None]
+        self._add_layers_from(specs, name, len(items) - len(specs))
+
+    def _add_index(self, name: str, formula: str, items: list, bands: dict):
+        specs = [s for s in (index_spec(i, name, formula, bands[id(i)]) for i in items) if s is not None]
+        self._add_layers_from(specs, name, len(items) - len(specs))
+
+    def _custom_index(self, items: list, bands: dict):
+        names = sorted({b.common or b.asset for i in items for b in bands[id(i)]})
+        answer = IndexDialog.ask(names, self)
+        if answer is not None:
+            name, formula = answer
+            have = [i for i in items if index_spec(i, name, formula, bands[id(i)]) is not None]
+            if not have:
+                self._warn(f"None of the selected tiles has all the bands that {name} uses.")
+                return
+            self._add_index(name, formula, have, bands)
+
+    def _choose_assets(self, items: list, bands: dict, titles: dict):
+        answer = AssetsDialog.ask(list(titles.items()), len(items), self)
+        if answer is None:
+            return
+        keys, stack = answer
+        specs, skipped = [], 0
+        for tile in items:
+            if stack:
+                spec = stack_spec(tile, keys, bands[id(tile)])
+                if spec is not None:
+                    specs.append(spec)
+                else:
+                    skipped += 1
+            else:
+                made = [s for s in (asset_layer_spec(tile, k) for k in keys) if s is not None]
+                specs.extend(made)
+                skipped += 0 if made else 1
+        self._add_layers_from(specs, "bands", skipped)
+
+    def _add_asset(self, key: str, items: list):
+        specs = [s for s in (asset_layer_spec(i, key) for i in items) if s is not None]
+        self._add_layers_from(specs, key, len(items) - len(specs))
+
     # ---- asset actions from the hover card -----------------------------------------------------
 
     def _on_asset_action(self, row: int, action: str, key: str):
@@ -767,16 +946,20 @@ class SearchTab(QWidget):
         except OSError as e:
             self._warn(f"Could not replace {path}: {e}")
             return
-        job = DownloadJob(f"{item.id} · {key}", href, path)
+        cfg = auth.cfg_for_source(item.source)
+        auth.prepare_asset(href, cfg)
+        job = DownloadJob(f"{item.id} · {key}", href, path, authcfg=cfg)
         self._download_files, self._download_bboxes, self._download_items = [path], {}, {}
         self._pending_notes = []
         self._single_asset_download = True  # just save it: no adding to the map afterwards
         self._begin_download([job], {})
 
-    def _json_html_for_row(self, row: int) -> Optional[str]:
+    def _json_html_for_row(self, row: int, mode: str = "json") -> Optional[str]:
         if not 0 <= row < len(self._items):
             return None
         item = self._items[row]
+        if mode == "html":
+            return item_to_friendly_html(item)
         return json_to_html(item_json_text(item), item)
 
     def _clear_results(self):
@@ -798,7 +981,9 @@ class SearchTab(QWidget):
             href = thumbnail_href(item, self._lidar)
             if not href:
                 continue
-            reply = QgsNetworkAccessManager.instance().get(QNetworkRequest(QUrl(signing.fetchable_url(href))))
+            request = QNetworkRequest(QUrl(signing.fetchable_url(href)))
+            auth.apply_to_request(request, auth.cfg_for_source(item.source))
+            reply = QgsNetworkAccessManager.instance().get(request)
             self._thumb_replies.append(reply)
             reply.finished.connect(lambda reply=reply, row=row: self._on_thumbnail_fetched(reply, row))
 
@@ -1248,7 +1433,9 @@ class SearchTab(QWidget):
             return
 
         self.results_status.setText("Checking file sizes...")
-        self._size_task = SizesTask([j.url for j in todo], lambda sizes: self._on_sizes(todo, sizes))
+        self._size_task = SizesTask(
+            [j.url for j in todo], lambda sizes: self._on_sizes(todo, sizes), {j.url: j.authcfg for j in todo if j.authcfg}
+        )
         self._update_add_enabled()
         QgsApplication.taskManager().addTask(self._size_task)
 

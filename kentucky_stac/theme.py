@@ -20,7 +20,7 @@ _SIZE = 11  # pixels
 _VIEWS = ("QCheckBox", "QListView", "QTreeView", "QAbstractItemView")
 
 
-def _mix(a: QColor, b: QColor, amount: float) -> QColor:
+def mix_colors(a: QColor, b: QColor, amount: float) -> QColor:
     """`amount` of colour a blended into b (0 = all b, 1 = all a)."""
     return QColor(
         round(a.red() * amount + b.red() * (1 - amount)),
@@ -37,9 +37,9 @@ def _rule(state: str, body: str) -> str:
 def checkbox_style() -> str:
     palette = QApplication.palette()
     text, base, window = palette.text().color(), palette.base().color(), palette.window().color()
-    outline = _mix(text, base, 0.5).name()  # muted, but clearly lighter than a dark list
-    hover = _mix(text, base, 0.8).name()
-    faint = _mix(text, window, 0.25).name()
+    outline = mix_colors(text, base, 0.5).name()  # muted, but clearly lighter than a dark list
+    hover = mix_colors(text, base, 0.8).name()
+    faint = mix_colors(text, window, 0.25).name()
     return "".join(
         [
             _rule(
