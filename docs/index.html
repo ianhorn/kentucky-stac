@@ -231,6 +231,7 @@
     <a href="#results">Results list</a>
     <a href="#imagery-actions">Imagery / DEM actions</a>
     <a href="#lidar-actions">LiDAR actions</a>
+    <a href="#point-filter">Point filter</a>
     <a href="#bands-menu">Right-click: bands &amp; indices</a>
     <a href="#export-script">Export as script</a>
     <a href="#clip">Clip to area of interest</a>
@@ -270,7 +271,7 @@
     <ul>
       <li><strong>QGIS 3.34 or later</strong>; the 3.44 LTR, installed via <a href="https://trac.osgeo.org/osgeo4w/" target="_blank" rel="noopener">OSGeo4W</a>, is the build it is developed on.</li>
       <li><strong>QGIS 4 (Qt6)</strong> is supported too: search, streaming, downloads, mosaics, Virtual Point Clouds and clipping were all exercised on 4.2.3, and the plugin is listed for it in the plugin repository.</li>
-      <li>PDAL, bundled with OSGeo4W, is required for point cloud AOI clipping and is already on <code>PATH</code> inside a normal OSGeo4W install.</li>
+      <li>PDAL, bundled with OSGeo4W, is required for point cloud AOI clipping and for filtering downloaded point clouds by class or return, and is already on <code>PATH</code> inside a normal OSGeo4W install.</li>
     </ul>
     <h3>Install the plugin</h3>
     <p><strong>From the QGIS plugin repository (recommended).</strong> Open <strong>Plugins &rarr; Manage and Install Plugins &rarr;
@@ -494,6 +495,28 @@
       option makes QGIS read every point of every tile in the background, which takes longer. The options are not
       offered for <strong>Add selected as Virtual Point Cloud</strong>, which streams: the algorithm has to read
       every point, and it never finished over https.</p>
+  </section>
+
+  <section id="point-filter">
+    <h2>Point filter (LiDAR)</h2>
+    <p class="lede">Choose which points of a point cloud to keep. On the LiDAR tab, open <strong>Point filter</strong>
+      (the collapsed bar just above the action buttons). Its header says what is kept, for example
+      <em>Point filter (Ground; last return)</em>.</p>
+    <ul>
+      <li><strong>Classes</strong> &mdash; tick the LAS classifications to keep (ground, vegetation, building, water, noise and so on).
+        The buttons above them choose a common set in one click: <em>All</em>, <em>Ground only</em>, <em>Without noise</em>,
+        <em>Vegetation</em>, <em>Buildings</em>. <em>Other (19 and up)</em> covers reserved and user-defined codes, so they are not dropped by accident.</li>
+      <li><strong>Returns</strong> &mdash; <em>All returns</em>, <em>First return</em> or <em>Last return</em>. A pulse with a single return counts as both first and last.</li>
+    </ul>
+    <p>The filter combines the two: Ground with Last return keeps only ground points that are last returns. It applies to three buttons:</p>
+    <table>
+      <tr><th>Button</th><th>With a filter on</th></tr>
+      <tr><td>Add selected to map</td><td>Each streamed tile is added with a filter, so only the kept points draw. The layer is named like <code>T1 (Ground; first return)</code>, and a filtered and an unfiltered copy of the same tile can be on the map together. Nothing is downloaded or changed on disk.</td></tr>
+      <tr><td>Download selected&hellip;</td><td>After the download, PDAL writes a filtered copy of each tile into a <code>filtered</code> folder beside the originals (the originals are kept). If <strong>Add downloaded files to the map</strong> is ticked, the copies are added; a tile with no points left is reported and left out.</td></tr>
+      <tr><td>Add selected as Virtual Point Cloud</td><td>QGIS cannot filter a virtual point cloud that streams its tiles. You are offered <em>Download and filter</em> (the tiles are downloaded, filtered by PDAL and combined) or <em>Add unfiltered</em>.</td></tr>
+    </table>
+    <p><strong>Export as script&hellip;</strong> does not use the filter. Downloading and filtering reads every point of every tile, so it takes a while; it needs PDAL (see <a href="#installation">Installation</a>).
+      With no class ticked there is nothing to keep, and the buttons say so instead of running.</p>
   </section>
 
   <section id="bands-menu">
