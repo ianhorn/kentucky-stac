@@ -66,11 +66,14 @@ from .layers import (
     layer_specs,
     local_specs,
     union_bbox,
+    with_point_filter,
 )
 from .mosaic import BuildMosaicsTask, plan_mosaics
 from . import scripts
 from .mosaicjson import native_gsd, plan_mosaicjson, write_mosaicjson
-from .pdal_clip import CropPointCloudsTask, clipped_path
+from .pdal_clip import CropPointCloudsTask, clipped_path, filtered_path, pdal_available
+from .point_filter import PointFilter
+from .point_filter_panel import PointFilterPanel
 from .results_layer import select_results, show_results
 from .server_layers import RegisterMosaicsTask, add_cog_layers, add_search_layer, plan_server_mosaics, tiler_url
 from .sources import DEFAULT_SOURCE, ApiSource, is_default_uri, source_name, tiler_for
@@ -261,6 +264,10 @@ class SearchTab(QWidget):
         self._vpc_options = VpcOptions()  # chosen when a download that will combine into a VPC starts
         self._download: Optional[DownloadManager] = None
         self._clip_task: Optional[CropPointCloudsTask] = None
+        self._download_filter: Optional[PointFilter] = None  # the point filter the running download will apply
+        self._force_add_when_done = False  # a download started from the Virtual Point Cloud button always adds
+        self._process_add = True  # whether the clipped/filtered files are added to the map when ready
+        self._process_note = ""  # what was done to them, for the message
         self._clip_sources: dict = {}  # cropped path -> the original downloaded path it came from
         self._download_files: List[str] = []  # every file this download run should end up with
         self._download_bboxes: dict = {}  # path -> the tile's catalog footprint
@@ -298,6 +305,8 @@ class SearchTab(QWidget):
         self.status.setWordWrap(True)
 
         self.filters = FiltersPanel(lidar)
+        # Which classifications and return numbers to keep when adding, combining or downloading point clouds.
+        self.point_filter: Optional[PointFilterPanel] = PointFilterPanel() if lidar else None
         self.search_button = WrapButton("Search area of interest")
         self.search_button.clicked.connect(self.search)
 
@@ -463,6 +472,8 @@ class SearchTab(QWidget):
         results_selection_row.addWidget(self.clear_results_selection_button)
         layout.addLayout(results_selection_row)
         layout.addWidget(self.tree, 1)
+        if self.point_filter is not None:
+            layout.addWidget(self.point_filter)
         layout.addLayout(actions)
         if self.vpc_button is not None:
             vpc_row = QHBoxLayout()
@@ -1079,15 +1090,34 @@ class SearchTab(QWidget):
 
     # ---- add to map -----------------------------------------------------------------------
 
+    def _filter_blocks(self) -> bool:
+        """True, after saying why, when the point filter has no classification or no return number ticked."""
+        if self.point_filter is not None and self.point_filter.value().empty:
+            self._info("The point filter keeps nothing: tick at least one classification.")
+            return True
+        return False
+
+    def _active_filter(self) -> Optional[PointFilter]:
+        """The point filter when it drops some points, else None (also None on the imagery tab)."""
+        if self.point_filter is None:
+            return None
+        value = self.point_filter.value()
+        return value if value.active else None
+
     def add_to_map(self):
-        if self._busy():
+        if self._busy() or self._filter_blocks():
             return
         items = self.selected_items()
         specs, skipped = layer_specs(items, self._lidar)
+        point_filter = self._active_filter()
+        if point_filter is not None:
+            specs = with_point_filter(specs, point_filter.qgis_expression(), point_filter.summary())
         duplicates = already_on_map(specs)
         specs = [s for s in specs if s not in duplicates]
 
         notes = []
+        if point_filter is not None:
+            notes.append(f"showing only {point_filter.summary()}")
         if skipped:
             n = len(skipped)
             notes.append(
@@ -1134,9 +1164,57 @@ class SearchTab(QWidget):
         their remote hrefs -- same VPC format as the download-then-combine path (see _add_as_vpc),
         no local file involved except the small .vpc index itself. Only COPC tiles can stream, same
         restriction as add_to_map's layer_specs()."""
-        if self._busy():
+        if self._busy() or self._filter_blocks():
             return
         items = self.selected_items()
+        point_filter = self._active_filter()
+        if point_filter is not None:
+            self._filtered_vpc(items, point_filter)
+        else:
+            self._streamed_vpc(items)
+
+    def _filtered_vpc(self, items: List[Item], point_filter: PointFilter):
+        """QGIS ignores a point filter on a virtual point cloud layer (tested), so a filtered one has to be
+        built from filtered copies of the tiles: offer to download and filter them, or to go on unfiltered."""
+        if len(items) < 2:
+            self._info("Select two or more tiles to combine into a virtual point cloud.")
+            return
+        box = QMessageBox(
+            QMessageBox.Icon.Question,
+            "Filtered virtual point cloud",
+            "QGIS can't filter a virtual point cloud that streams its tiles.\n\n"
+            f"Download the {len(items)} tiles and keep only {point_filter.summary()}? PDAL reads every point of every tile, "
+            "so this takes a while.\n\nOr add the tiles unfiltered, streamed.",
+            parent=self,
+        )
+        download = box.addButton("Download and filter", QMessageBox.ButtonRole.AcceptRole)
+        unfiltered = box.addButton("Add unfiltered", QMessageBox.ButtonRole.ActionRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is download:
+            self._download_and_add(items, point_filter)
+        elif clicked is unfiltered:
+            self._streamed_vpc(items)
+
+    def _download_and_add(self, items: List[Item], point_filter: PointFilter):
+        """Download `items`, keep only the points `point_filter` allows, and add the results combined."""
+        if not pdal_available():
+            self._warn("Filtering downloaded tiles needs PDAL, which was not found. It comes with QGIS (OSGeo4W) on Windows.")
+            return
+        settings = QgsSettings()
+        folder = QFileDialog.getExistingDirectory(
+            self, "Download and filter tiles in", str(settings.value("kentucky_stac/download_dir", "") or "")
+        )
+        if not folder:
+            return
+        settings.setValue("kentucky_stac/download_dir", folder)
+        self._vpc_options = VpcOptions()
+        self._download_filter = point_filter
+        self._force_add_when_done = True
+        self.start_download(items, folder)
+
+    def _streamed_vpc(self, items: List[Item]):
         entries = []
         skipped = 0
         for item in items:
@@ -1392,11 +1470,17 @@ class SearchTab(QWidget):
     # ---- download -------------------------------------------------------------------------
 
     def download_selected(self):
-        if self._busy():
+        if self._busy() or self._filter_blocks():
             return
         items = self.selected_items()
         if not items:
             return
+        point_filter = self._active_filter()
+        if point_filter is not None and not pdal_available():
+            self._warn("Filtering downloaded tiles needs PDAL, which was not found. It comes with QGIS (OSGeo4W) on Windows.")
+            return
+        self._download_filter = point_filter
+        self._force_add_when_done = False
         # Downloaded point clouds are combined into a virtual point cloud when that box is ticked,
         # so ask for its options now rather than interrupting once the downloads finish.
         self._vpc_options = VpcOptions()
@@ -1450,6 +1534,7 @@ class SearchTab(QWidget):
         if total and unknown:
             size_text += f" plus {unknown} of unknown size"
         if not self._confirm_download(f"Download {len(todo)} file{'s' if len(todo) != 1 else ''} ({size_text})?"):
+            self._download_filter, self._force_add_when_done = None, False
             self._update_add_enabled()
             return
         self._begin_download(todo, sizes)
@@ -1496,36 +1581,59 @@ class SearchTab(QWidget):
                 parts.append(f"{len(failed)} failed (first: {failed[0][0]}: {failed[0][1]})")
             (self._warn if failed else self._info)("; ".join(parts) + ".")
         single, self._single_asset_download = self._single_asset_download, False
-        if cancelled or single or not self.add_when_done.isChecked():
+        wants_add = self.add_when_done.isChecked() or self._force_add_when_done
+        point_filter, self._download_filter = self._download_filter, None
+        self._force_add_when_done = False
+        if cancelled or single or not (wants_add or point_filter is not None):
             return
         # Add every planned file that is now on disk, including ones downloaded on an earlier run.
         paths = [f for f in self._download_files if os.path.exists(f)]
         if not paths:
             return
-        # PDAL clipping only applies to downloaded point clouds (see pdal_clip.py) -- the imagery/DEM
-        # tab's own clip_to_aoi only applies to the mosaic-building flow (start_mosaic), not a plain
-        # download, which has no clipping implementation of its own.
-        if self._lidar and self.clip_to_aoi.isChecked() and self._aoi_is_polygon():
-            self._start_clip(paths)
+        # PDAL clipping and filtering only apply to downloaded point clouds (see pdal_clip.py) -- the
+        # imagery/DEM tab's own clip_to_aoi only applies to the mosaic-building flow (start_mosaic), not a
+        # plain download, which has no clipping implementation of its own. Clipping is done when the files
+        # are to be added; a point filter is done whenever one was set, added or not.
+        clip = self._lidar and wants_add and self.clip_to_aoi.isChecked() and self._aoi_is_polygon()
+        if clip or point_filter is not None:
+            self._start_clip(paths, clip, point_filter, wants_add)
             return
         self._add_downloaded(paths, [])
 
-    def _start_clip(self, paths: List[str]):
-        """Crop every downloaded tile to the AOI (see pdal_clip.py) before adding/combining."""
-        try:
-            aoi_geom = self._aoi.geometry_wgs84(QgsProject.instance().transformContext())
-        except Exception as e:
-            self._warn(f"Could not use the area of interest to clip; adding the unclipped tiles instead: {e}")
-            self._add_downloaded(paths, [])
+    def _start_clip(self, paths: List[str], clip: bool, point_filter: Optional[PointFilter], add: bool):
+        """Crop every downloaded tile to the AOI and/or keep only the points the filter allows (see
+        pdal_clip.py), writing copies next to the originals; then add/combine them if `add`."""
+        parts: List[str] = []
+        if clip:
+            try:
+                aoi_geom = self._aoi.geometry_wgs84(QgsProject.instance().transformContext())
+                parts = wkt_parts(aoi_geom) if aoi_geom is not None else []
+            except Exception as e:
+                self._warn(f"Could not use the area of interest to clip; leaving the tiles unclipped: {e}")
+        limits = point_filter.pdal_limits() if point_filter is not None else ""
+        expression = point_filter.pdal_expression() if point_filter is not None else ""
+        filtering = bool(limits or expression)
+        if not parts and not filtering:
+            if add:
+                self._add_downloaded(paths, [])
             return
-        parts = wkt_parts(aoi_geom) if aoi_geom is not None else []
-        if not parts:
-            self._add_downloaded(paths, [])
+        if not pdal_available():
+            self._warn("Clipping and filtering downloaded tiles need PDAL, which was not found; nothing was changed.")
             return
-        out_dir = os.path.join(os.path.dirname(paths[0]), "clipped")
-        jobs = [(p, clipped_path(p, out_dir)) for p in paths]
+        out_dir = os.path.join(os.path.dirname(paths[0]), "filtered" if filtering else "clipped")
+        if filtering:
+            jobs = [(p, filtered_path(p, out_dir, clipped=bool(parts))) for p in paths]
+        else:
+            jobs = [(p, clipped_path(p, out_dir)) for p in paths]
+        done = []
+        if parts:
+            done.append("clipped to the area of interest")
+        if filtering:
+            done.append(f"kept only {point_filter.summary()}")
+        self._process_note = " and ".join(done) + f" (saved in {out_dir})"
+        self._process_add = add
         self._clip_sources = {dst: src for src, dst in jobs}
-        self._clip_task = CropPointCloudsTask(jobs, parts, self._on_clip_finished)
+        self._clip_task = CropPointCloudsTask(jobs, parts, self._on_clip_finished, limits, expression)
         self._update_add_enabled()
         QgsApplication.taskManager().addTask(self._clip_task)
 
@@ -1557,7 +1665,11 @@ class SearchTab(QWidget):
             first = f"{failed[0][0]}: {failed[0][1]}"
             notes.append(f"{len(failed)} tile{'s' if len(failed) != 1 else ''} left out (first: {first})")
         if not cropped:
-            self._warn("; ".join(notes) + "." if notes else "Clipping produced no output; nothing added.")
+            self._warn("; ".join(notes) + "." if notes else "Nothing was left after clipping and filtering; nothing added.")
+            return
+        notes.insert(0, self._process_note)
+        if not self._process_add:
+            self._info(f"{len(cropped)} file{'s' if len(cropped) != 1 else ''}: " + "; ".join(notes) + ".")
             return
         self._add_downloaded(cropped, notes)
 

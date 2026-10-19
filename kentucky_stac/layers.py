@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 from qgis.core import (
@@ -46,6 +46,9 @@ class LayerSpec:
     # Builds the layer itself (on the worker thread) instead of opening `uri`: band combinations and
     # indices, which need several remote files opened and a style applied (see band_layers.py).
     factory: Optional[Callable[[], Optional[QgsMapLayer]]] = None
+    # A QGIS point cloud filter expression (see point_filter.py) set on the layer once it is added, so only
+    # some classes / return numbers draw. Not honoured by a "vpc" layer.
+    subset: str = ""
 
 
 _payer_set = False
@@ -407,6 +410,8 @@ class AddLayersTask(QgsTask):
                     fresh = flat_crs(fresh)
             layer.setCrs(QgsCoordinateReferenceSystem())
             layer.setCrs(fresh)
+            if spec.subset and isinstance(layer, QgsPointCloudLayer):
+                layer.setSubsetString(spec.subset)
             project.addMapLayer(layer, False)
             group.addLayer(layer)
             # QGIS can apply the project CRS to a layer as it is added; verify placement again.
@@ -419,7 +424,18 @@ def already_on_map(specs: List[LayerSpec], project: Optional[QgsProject] = None)
     """The specs whose source is already a layer in the project."""
     project = project or QgsProject.instance()
     layers = project.mapLayers().values()
-    sources = {layer.source() for layer in layers}
+    # A point cloud already shown with a different filter is not the same layer.
+    sources = {(layer.source(), layer.subsetString() if isinstance(layer, QgsPointCloudLayer) else "") for layer in layers}
     names = {layer.name() for layer in layers}
     # A factory-built layer's source isn't known beforehand, so it is recognised by its name.
-    return [s for s in specs if (s.name in names if s.factory is not None else s.uri in sources)]
+    return [s for s in specs if (s.name in names if s.factory is not None else (s.uri, s.subset) in sources)]
+
+
+def with_point_filter(specs: List[LayerSpec], expression: str, label: str) -> List[LayerSpec]:
+    """`specs` with a point cloud filter expression set on the streamed point cloud ones, which are renamed
+    to say so (a filtered and an unfiltered copy of a tile can then sit side by side)."""
+    if not expression:
+        return specs
+    return [
+        replace(s, subset=expression, name=f"{s.name} ({label})") if s.provider in ("copc", "pdal") else s for s in specs
+    ]

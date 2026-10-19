@@ -55,17 +55,32 @@ def clipped_path(source_path: str, out_dir: str) -> str:
     return os.path.join(out_dir, base + ".clipped.laz")
 
 
-def _pipeline_json(input_path: str, output_path: str, wkt_parts: List[str]) -> str:
+def filtered_path(source_path: str, out_dir: str, clipped: bool = False) -> str:
+    """Where a copy of `source_path` with only some of its points kept (see point_filter.py) should be
+    written; `clipped` when it was also cropped to the AOI."""
+    base = os.path.basename(clipped_path(source_path, out_dir))[: -len(".clipped.laz")]
+    return os.path.join(out_dir, base + (".clipped" if clipped else "") + ".filtered.laz")
+
+
+def _pipeline_json(input_path: str, output_path: str, wkt_parts: List[str], limits: str = "", expression: str = "") -> str:
+    """The PDAL pipeline: read, crop to each AOI part (if any), keep the points within `limits` (a
+    filters.range string, if any) and matching `expression` (a filters.expression, if any), write LAZ."""
     stages = [{"type": "readers.las", "filename": input_path, "tag": "read"}]
     crop_tags = []
     for i, wkt in enumerate(wkt_parts):
         tag = f"crop{i}"
         crop_tags.append(tag)
         stages.append({"type": "filters.crop", "polygon": wkt, "a_srs": "EPSG:4326", "inputs": ["read"], "tag": tag})
-    final_tag = crop_tags[0]
+    final_tag = crop_tags[0] if crop_tags else "read"
     if len(crop_tags) > 1:
         stages.append({"type": "filters.merge", "inputs": crop_tags, "tag": "merged"})
         final_tag = "merged"
+    if limits:
+        stages.append({"type": "filters.range", "limits": limits, "inputs": [final_tag], "tag": "keep"})
+        final_tag = "keep"
+    if expression:
+        stages.append({"type": "filters.expression", "expression": expression, "inputs": [final_tag], "tag": "match"})
+        final_tag = "match"
     stages.append({"type": "writers.las", "filename": output_path, "compression": True, "inputs": [final_tag]})
     return json.dumps({"pipeline": stages})
 
@@ -76,13 +91,21 @@ def _resolve(exe: str) -> str:
     return shutil.which(exe) or exe
 
 
-def crop_one(input_path: str, output_path: str, wkt_parts: List[str], pdal_exe: str = "pdal") -> Optional[str]:
-    """Crop one tile to `wkt_parts` (polygon WKT strings in EPSG:4326, one per AOI part). Returns
-    an error message on failure, None on success."""
+def pdal_available(pdal_exe: str = "pdal") -> bool:
+    """True when the PDAL command-line program can be found (it ships with QGIS on Windows and is on PATH)."""
+    return shutil.which(pdal_exe) is not None
+
+
+def crop_one(
+    input_path: str, output_path: str, wkt_parts: List[str], pdal_exe: str = "pdal", limits: str = "", expression: str = ""
+) -> Optional[str]:
+    """Crop one tile to `wkt_parts` (polygon WKT strings in EPSG:4326, one per AOI part) and/or keep only
+    the points within `limits` (see point_filter.PointFilter.pdal_limits). Returns an error message on
+    failure, None on success."""
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     pipeline_path = output_path + ".pipeline.json"
     with open(pipeline_path, "w", encoding="utf-8") as f:
-        f.write(_pipeline_json(input_path, output_path, wkt_parts))
+        f.write(_pipeline_json(input_path, output_path, wkt_parts, limits, expression))
     try:
         # A fixed argument list, no shell: the executable is PDAL and the only variable argument is a
         # pipeline file this function just wrote.
@@ -144,22 +167,35 @@ def real_metadata(path: str, pdal_exe: str = "pdal") -> Optional[Dict[str, Any]]
 
 
 class CropPointCloudsTask(QgsTask):
-    """Crop each (source, destination) pair in `jobs` to `wkt_parts`, one PDAL process per tile, on
-    a worker thread, then read back each result's real metadata (see real_metadata). `callback(cropped,
-    failed, tile_meta)` runs on the main thread: `cropped` is the list of destination paths that were
-    written and have at least one point, `failed` a list of (source basename, error) -- including a
-    tile the AOI doesn't reach, whose crop produced zero points -- `tile_meta` maps a cropped path to
-    its real {"count", "bbox", "geometry"}. Nothing runs if the task was cancelled."""
+    """Crop each (source, destination) pair in `jobs` to `wkt_parts` and/or keep only the points within
+    `limits`, one PDAL process per tile, on a worker thread, then read back each result's real metadata
+    (see real_metadata). `callback(cropped, failed, tile_meta)` runs on the main thread: `cropped` is the
+    list of destination paths that were written and have at least one point, `failed` a list of (source
+    basename, error) -- including a tile the AOI doesn't reach or whose points are all filtered out,
+    whose result had zero points -- `tile_meta` maps a cropped path to its real {"count", "bbox",
+    "geometry"}. Nothing runs if the task was cancelled."""
 
     def __init__(
         self,
         jobs: List[Tuple[str, str]],
         wkt_parts: List[str],
         callback: Callable[[List[str], List[Tuple[str, str]], Dict[str, dict]], None],
+        limits: str = "",
+        expression: str = "",
     ):
-        super().__init__(f"Clipping {len(jobs)} tile{'s' if len(jobs) != 1 else ''} to the area of interest")
+        count = f"{len(jobs)} tile{'s' if len(jobs) != 1 else ''}"
+        filtering = bool(limits or expression)
+        if wkt_parts and filtering:
+            title = f"Clipping and filtering {count}"
+        elif filtering:
+            title = f"Filtering the points of {count}"
+        else:
+            title = f"Clipping {count} to the area of interest"
+        super().__init__(title)
         self._jobs = jobs
         self._wkt_parts = wkt_parts
+        self._limits = limits
+        self._expression = expression
         self._callback = callback
         self.cropped: List[str] = []
         self.failed: List[Tuple[str, str]] = []
@@ -169,15 +205,17 @@ class CropPointCloudsTask(QgsTask):
         for i, (src, dst) in enumerate(self._jobs):
             if self.isCanceled():
                 return False
-            error = crop_one(src, dst, self._wkt_parts)
+            error = crop_one(src, dst, self._wkt_parts, limits=self._limits, expression=self._expression)
             if error:
                 self.failed.append((os.path.basename(src), error))
             else:
                 meta = real_metadata(dst)
                 if meta is None:
-                    self.failed.append((os.path.basename(src), "cropped, but could not read the result's metadata"))
+                    self.failed.append((os.path.basename(src), "processed, but could not read the result's metadata"))
                 elif not meta["count"]:
-                    self.failed.append((os.path.basename(src), "outside the area of interest"))
+                    self.failed.append(
+                        (os.path.basename(src), "no points left" + (" after filtering" if self._limits or self._expression else " inside the area of interest"))
+                    )
                     try:
                         os.remove(dst)
                     except OSError:
