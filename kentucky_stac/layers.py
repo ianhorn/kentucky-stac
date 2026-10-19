@@ -325,7 +325,7 @@ def _point_cloud_epsg(layer: QgsPointCloudLayer) -> str:
             if authid.upper().startswith("EPSG:"):
                 return authid.split(":", 1)[1]
     except Exception:
-        pass
+        return ""
     return ""
 
 

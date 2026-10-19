@@ -15,8 +15,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from html import escape  # also valid XML escaping (& < > and quotes)
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
-from xml.sax.saxutils import escape
 
 from qgis.core import (
     QgsApplication,
@@ -69,7 +69,7 @@ def _wrapper_vrt(href: str, authcfg: str = "") -> str:
     from osgeo import gdal
 
     source = _calc_path(href, authcfg)
-    out = os.path.join(_vrt_directory(), "src_" + hashlib.sha1(source.encode("utf-8")).hexdigest()[:16] + ".vrt")
+    out = os.path.join(_vrt_directory(), "src_" + hashlib.sha1(source.encode("utf-8"), usedforsecurity=False).hexdigest()[:16] + ".vrt")
     if not os.path.exists(out):
         dataset = gdal.Translate(out, source, format="VRT")
         if dataset is None:
@@ -177,7 +177,7 @@ def stack_spec(item: Item, asset_keys: Sequence[str], bands: Sequence[Band]) -> 
         return None
     cfg = auth.cfg_for_source(item.source)
     sources = [(_gdal_path(b.href, cfg), b.index) for b in chosen]
-    key = hashlib.sha1(json.dumps([item.id, "stack", sources]).encode("utf-8")).hexdigest()[:16]
+    key = hashlib.sha1(json.dumps([item.id, "stack", sources]).encode("utf-8"), usedforsecurity=False).hexdigest()[:16]
     layer_name = f"{item.id} · {len(chosen)}-band stack ({', '.join(asset_keys)})"
 
     def factory() -> Optional[QgsMapLayer]:
@@ -199,7 +199,7 @@ def combination_spec(item: Item, name: str, bands: Sequence[Band]) -> Optional[L
         return None
     cfg = auth.cfg_for_source(item.source)
     sources = [(_gdal_path(b.href, cfg), b.index) for b in picked]
-    key = hashlib.sha1(json.dumps([item.id, name, sources]).encode("utf-8")).hexdigest()[:16]
+    key = hashlib.sha1(json.dumps([item.id, name, sources]).encode("utf-8"), usedforsecurity=False).hexdigest()[:16]
     layer_name = f"{item.id} · {name}"
 
     def factory() -> Optional[QgsMapLayer]:
@@ -252,7 +252,7 @@ def index_spec(item: Item, name: str, formula: str, bands: Sequence[Band]) -> Op
     except ValueError:
         return None
     layer_name = f"{item.id} · {name}"
-    key = hashlib.sha1(json.dumps([item.id, formula, hrefs]).encode("utf-8")).hexdigest()[:16]
+    key = hashlib.sha1(json.dumps([item.id, formula, hrefs]).encode("utf-8"), usedforsecurity=False).hexdigest()[:16]
 
     def factory() -> Optional[QgsMapLayer]:
         inputs, wrappers = {}, {}
