@@ -51,7 +51,7 @@ def plugin_files():
 
 def build_zip(out_dir: Path) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
-    target = out_dir / f"kentucky_stac.{plugin_version()}.zip"
+    target = out_dir / f"kentucky_stac-{plugin_version()}.zip"
     with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
         for path in plugin_files():
             archive.write(path, Path("kentucky_stac") / path.relative_to(PLUGIN_DIR))

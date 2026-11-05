@@ -96,7 +96,7 @@ traceback reaches QGIS's Log Messages panel. Ruff enforces this.
    the top of `changelog` in `metadata.txt`. A test fails if these drift apart.
 2. Run through [`QA_CHECKLIST.md`](QA_CHECKLIST.md) in QGIS (CI can't click through the live catalog), merge to `main` once CI is green, then tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`.
 3. The **Release** workflow checks the tag matches `metadata.txt`, re-runs lint and tests, builds
-   `kentucky_stac.X.Y.Z.zip`, and attaches it to a GitHub release (marked pre-release while the plugin is
+   `kentucky_stac-X.Y.Z.zip`, and attaches it to a GitHub release (marked pre-release while the plugin is
    experimental) with the changelog entry as its notes.
 4. Upload that zip at <https://plugins.qgis.org/plugins/kentucky_stac/> via **Manage**. This step is manual
    because it needs your OSGeo login. To move out of "experimental", remove `experimental=True` from
