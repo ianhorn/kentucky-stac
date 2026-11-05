@@ -87,7 +87,7 @@ class AoiBar(QGroupBox):
         self._release_active_tool()
         try:
             add_aoi_feature(geometry, crs, label)
-        except Exception as e:  # the AOI itself is set; only the scratch-layer record failed
+        except Exception as e:  # noqa: BLE001 - the AOI itself is set; only the scratch-layer record failed
             self._notify(f"Set the AOI, but could not save it to a layer: {e}", Qgis.MessageLevel.Warning)
 
     def _release_active_tool(self):

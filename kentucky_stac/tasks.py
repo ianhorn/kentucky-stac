@@ -10,6 +10,7 @@ from typing import Callable, List, Optional, Sequence, Tuple
 from qgis.core import QgsTask
 
 from . import auth
+from .diagnostics import log_exception
 from .qgis_transport import qgis_transport, transport_for
 from .sources import STAC_INDEX_URL, ApiSource, CatalogEntry, parse_stac_index
 from .stac import Collection, Item, SearchQuery, StacClient, StacError, query_variants, within_cloud
@@ -19,7 +20,7 @@ def _with_hint(client: StacClient, message: str) -> str:
     """The error, plus -- when the address turns out to be a catalog of catalogs -- the catalogs to use instead."""
     try:
         children = client.child_catalogs()
-    except Exception:
+    except (StacError, ValueError, TypeError, AttributeError):  # only a hint; the original message stands
         return message
     if not children:
         return message
@@ -58,7 +59,8 @@ class CollectionsTask(QgsTask):
                     self.errors.append(
                         (source.name, f"only the first {len(found)} collections loaded: {client.partial_error}")
                     )
-            except Exception as e:  # report any failure to the UI instead of losing it in the thread
+            except Exception as e:  # noqa: BLE001 - a worker thread must not let an exception escape
+                log_exception(f"Could not load the collections of {source.name}")
                 self.errors.append((source.name, _with_hint(client, str(e))))
         return True
 
@@ -115,7 +117,8 @@ class SearchTask(QgsTask):
                 return False
             try:
                 items, matched, truncated = self._search_one(base_uri, collection_ids)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - a worker thread must not let an exception escape
+                log_exception("A search failed")
                 self.errors.append((self._names.get(base_uri, base_uri), str(e)))
                 continue
             if self.isCanceled():
@@ -217,7 +220,8 @@ class StacIndexTask(QgsTask):
             raw = qgis_transport("GET", STAC_INDEX_URL, None, {"Accept": "application/json"})
             self.entries = parse_stac_index(json.loads(raw))
             return True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - a worker thread must not let an exception escape
+            log_exception("Could not load the STAC Index")
             self.error = str(e)
             return False
 

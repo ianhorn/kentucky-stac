@@ -22,6 +22,7 @@ from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 from qgis.core import QgsProject, QgsRasterLayer, QgsSettings, QgsTask
 
+from .diagnostics import log_exception
 from .qgis_transport import qgis_transport
 from .sources import is_default_uri
 from .stac import Item, StacError
@@ -189,7 +190,7 @@ def detect_server_kind(base: str) -> str:
             "GET", f"{base.rstrip('/')}/openapi.json", None, {"Accept": "application/json", "User-Agent": USER_AGENT}
         )
         paths = list((json.loads(raw).get("paths") or {}).keys())
-    except Exception:
+    except (StacError, ValueError, AttributeError):  # unreachable, not JSON, or not an OpenAPI document
         return ""
     if any("/searches/" in p for p in paths):
         return "pgstac"
@@ -275,7 +276,8 @@ class RegisterMosaicsTask(QgsTask):
                     self.built.append((group, None, style, "cog"))
                 else:
                     self.failed.append((group.collection_id, str(e)))
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - a worker thread must not let an exception escape
+                log_exception(f"Could not register mosaics for {group.collection_id}")
                 self.failed.append((group.collection_id, str(e)))
         return True
 

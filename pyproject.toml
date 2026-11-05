@@ -20,8 +20,9 @@ extend-exclude = ["kentucky_stac/ext_libs"]
 
 [tool.ruff.lint]
 # Explicit so a ruff upgrade can't silently widen the ruleset: pyflakes, pycodestyle errors and
-# warnings (E501 line length is left to the formatter-free 100 col soft limit), import order.
-select = ["E4", "E7", "E9", "F", "W", "I"]
+# warnings, import order, and exception hygiene (BLE001 blind except, S110/S112 silent except).
+# A deliberate catch-all carries `# noqa: BLE001 - <why>` on its line.
+select = ["E4", "E7", "E9", "F", "W", "I", "BLE", "S110", "S112"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

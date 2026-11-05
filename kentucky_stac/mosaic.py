@@ -14,6 +14,7 @@ from typing import Callable, Dict, Iterable, List, Optional, Tuple
 from qgis.core import QgsTask
 
 from .catalog import primary_asset
+from .diagnostics import log_exception
 from .gdal_setup import setup_gdal
 from .layers import Bbox, item_bbox, raster_uri, union_bbox
 from .stac import Item
@@ -102,7 +103,8 @@ class BuildMosaicsTask(QgsTask):
                     dataset.FlushCache()
                     dataset = None  # closing writes the file
                 self.built.append(spec)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - a worker thread must not let an exception escape
+                log_exception(f"Could not build the mosaic {spec.name}")
                 self.failed.append((spec.name, str(e)))
             self.setProgress(100.0 * (i + 1) / len(self._specs))
         return True

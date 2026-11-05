@@ -22,7 +22,7 @@ class KentuckyStacPlugin:
         # tiles can read them behind HTTPS-inspecting antivirus.
         try:
             setup_gdal()
-        except Exception as e:  # remote rasters may fail to open, but the plugin itself should still load
+        except Exception as e:  # noqa: BLE001 - remote rasters may fail to open, but the plugin itself should still load
             QgsMessageLog.logMessage(
                 f"Could not apply the GDAL network settings: {e}", "Kentucky STAC", Qgis.MessageLevel.Warning
             )

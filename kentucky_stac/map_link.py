@@ -15,6 +15,7 @@ from typing import Callable, List, Optional, Sequence, Tuple
 from qgis.core import (
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
+    QgsCsException,
     QgsGeometry,
     QgsPointXY,
     QgsProject,
@@ -141,7 +142,7 @@ class MapResultsLink(QObject):
             self._transform_crs = crs.authid() + crs.toWkt()
         try:
             return self._transform.transform(point)
-        except Exception:
+        except QgsCsException:  # a point outside the CRS's valid area
             return None
 
     def _on_map_move(self, point: QgsPointXY) -> None:

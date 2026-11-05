@@ -121,7 +121,7 @@ class DrawAoiTool(QgsMapTool):
         self._state.set(geometry, crs, label)
         try:
             add_aoi_feature(geometry, crs, label)
-        except Exception as e:  # the AOI itself is set; only the scratch-layer record failed
+        except Exception as e:  # noqa: BLE001 - the AOI itself is set; only the scratch-layer record failed
             _notify(self._bar, f"Drew the AOI, but could not save it to a layer: {e}", Qgis.MessageLevel.Warning)
         # One-shot: each draw replaces the AOI outright rather than accumulating, so there's no
         # workflow that needs the tool to stay active -- deactivate so its toolbar button doesn't
@@ -233,7 +233,7 @@ class SelectFeaturesTool(QgsMapTool):
             # workflow that needs the tool to stay active after a successful pick.
             self.canvas().unsetMapTool(self)
             return True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - a UI action reports any failure to the user instead of raising into Qt
             _notify(self._bar, f"Could not use the selected features as an AOI: {e}", Qgis.MessageLevel.Warning)
             return False
         finally:

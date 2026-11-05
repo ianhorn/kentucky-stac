@@ -15,6 +15,7 @@ from typing import Dict, Optional, Tuple
 
 from . import azure, s3
 from .qgis_transport import qgis_transport
+from .stac import StacError
 
 _SAS_SERVICE = "https://planetarycomputer.microsoft.com/api/sas/v1/token/{account}/{container}"  # public endpoint, no secret
 _REFRESH_MARGIN = 300  # ask for a new token when fewer than this many seconds remain
@@ -38,7 +39,7 @@ def _fetch_token(account: str, container: str) -> Optional[str]:
         data = json.loads(raw)
         token = data["token"]
         expires = azure.expiry_epoch(data.get("msft:expiry")) or time.time() + _DEFAULT_LIFETIME
-    except Exception:
+    except (StacError, ValueError, KeyError, TypeError):  # no token: remember that for a while
         token, expires = None, time.time() + _NEGATIVE_TTL
     with _lock:
         _cache[key] = (token, expires)
