@@ -1,4 +1,3 @@
-import json
 
 from kentucky_stac.catalog import can_add_to_map
 from kentucky_stac.item_json import item_json_text, json_to_html, parse_action_url

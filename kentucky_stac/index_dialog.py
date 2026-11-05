@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, Optional, Sequence, Tuple
 
 from qgis.core import QgsSettings
 from qgis.PyQt.QtWidgets import (

@@ -156,7 +156,13 @@ def test_item_json_text_and_html():
 
 
 def test_auth_cfg_is_saved_cleaned_and_looked_up():
-    from kentucky_stac.sources import ApiSource, auth_cfg_for, deserialize_sources, serialize_sources, with_auth_cfg
+    from kentucky_stac.sources import (
+        ApiSource,
+        auth_cfg_for,
+        deserialize_sources,
+        serialize_sources,
+        with_auth_cfg,
+    )
 
     src = ApiSource("Private", OTHER, auth_cfg="abc1234")
     again = deserialize_sources(serialize_sources([src]))

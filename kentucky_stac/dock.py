@@ -1,19 +1,28 @@
 from typing import List, Optional, Tuple
 
 from qgis.core import Qgis, QgsApplication, QgsSettings
-from qgis.PyQt.QtWidgets import QDialog, QDockWidget, QHBoxLayout, QLabel, QPushButton, QTabWidget, QVBoxLayout, QWidget
+from qgis.PyQt.QtWidgets import (
+    QDialog,
+    QDockWidget,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from . import auth
 from .aoi import AoiState
 from .aoi_bar import AoiBar
 from .catalog import split_collections
-from .search_tab import SearchTab
-from .theme import checkbox_style
-from .sources import ApiSource, deserialize_sources, serialize_sources
 from .feedback_dialog import FeedbackDialog, open_help
+from .search_tab import SearchTab
+from .sources import ApiSource, deserialize_sources, serialize_sources
 from .sources_dialog import SourcesDialog
 from .stac import Collection
 from .tasks import CollectionsTask
+from .theme import checkbox_style
 
 SOURCES_SETTINGS_KEY = "kentucky_stac/api_sources"
 

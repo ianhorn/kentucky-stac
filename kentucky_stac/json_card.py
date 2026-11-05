@@ -12,9 +12,9 @@ from qgis.core import QgsSettings
 from qgis.PyQt.QtCore import QEvent, QObject, QPoint, QRect, Qt, QTimer, QUrl, pyqtSignal
 from qgis.PyQt.QtGui import QDesktopServices, QGuiApplication, QTextOption
 from qgis.PyQt.QtWidgets import (
+    QButtonGroup,
     QDockWidget,
     QFrame,
-    QButtonGroup,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -25,7 +25,7 @@ from qgis.PyQt.QtWidgets import (
     QWidget,
 )
 
-from .item_json import json_to_html, parse_action_url
+from .item_json import parse_action_url
 
 SHOW_DELAY_MS = 500
 HIDE_DELAY_MS = 300

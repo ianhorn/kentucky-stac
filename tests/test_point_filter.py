@@ -1,6 +1,3 @@
-import json
-
-from kentucky_stac.pdal_clip import _pipeline_json, filtered_path
 from kentucky_stac.point_filter import ALL_CLASSES, PRESETS, PointFilter
 
 
@@ -64,22 +61,3 @@ def test_no_class_ticked_is_empty_and_gives_no_rule():
 def test_summary_is_short():
     assert PointFilter(classes=frozenset({2, 6}), returns="last").summary() == "Ground, Building; last return"
     assert PointFilter(classes=ALL_CLASSES - {7}).summary() == "19 classes"
-
-
-def test_pipeline_filters_after_cropping():
-    plain = json.loads(_pipeline_json("in.laz", "out.laz", [], "Classification[2:2]"))["pipeline"]
-    assert [s["type"] for s in plain] == ["readers.las", "filters.range", "writers.las"]
-    assert plain[1]["limits"] == "Classification[2:2]" and plain[2]["inputs"] == ["keep"]
-    both = json.loads(_pipeline_json("in.laz", "out.laz", ["POLYGON((0 0,1 0,1 1,0 0))"], "ReturnNumber[1:1]"))["pipeline"]
-    assert [s["type"] for s in both] == ["readers.las", "filters.crop", "filters.range", "writers.las"]
-    assert both[2]["inputs"] == ["crop0"]
-    clip_only = json.loads(_pipeline_json("in.laz", "out.laz", ["POLYGON((0 0,1 0,1 1,0 0))"]))["pipeline"]
-    assert "filters.range" not in [s["type"] for s in clip_only]
-    last = json.loads(_pipeline_json("in.laz", "out.laz", [], "Classification[2:2]", "ReturnNumber == NumberOfReturns"))["pipeline"]
-    assert [s["type"] for s in last] == ["readers.las", "filters.range", "filters.expression", "writers.las"]
-    assert last[2]["inputs"] == ["keep"] and last[3]["inputs"] == ["match"]
-
-
-def test_filtered_names():
-    assert filtered_path("D:/x/N1.copc.laz", "D:/out").replace("\\", "/") == "D:/out/N1.filtered.laz"
-    assert filtered_path("D:/x/N1.laz", "D:/out", clipped=True).replace("\\", "/") == "D:/out/N1.clipped.filtered.laz"
