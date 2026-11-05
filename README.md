@@ -1,18 +1,104 @@
 # Kentucky STAC
 
-QGIS plugin for searching, loading and downloading [Kentucky From Above](https://kyfromabove.ky.gov/)
-imagery, elevation and LiDAR (COPC) through its STAC API. Successor to the ArcGIS Pro add-ins
-`kyfromabove-stac-addin` and `kylidar-addin`.
+[![CI](https://github.com/ianhorn/kentucky-stac/actions/workflows/ci.yml/badge.svg)](https://github.com/ianhorn/kentucky-stac/actions/workflows/ci.yml)
+[![QGIS plugin](https://img.shields.io/badge/QGIS-plugin-589632)](https://plugins.qgis.org/plugins/kentucky_stac/)
+[![License: GPL v2+](https://img.shields.io/badge/license-GPL--2.0--or--later-blue)](LICENSE)
 
-Full documentation: [`docs/index.html`](docs/index.html) (published via GitHub Pages once enabled on
-this repo).
+A QGIS plugin for searching, streaming and downloading [Kentucky From Above](https://kyfromabove.ky.gov/)
+imagery, elevation and LiDAR through its STAC API. Draw an area of interest, pick collections, and add
+exactly the tiles you need to the map, or download them, without browsing catalogs by hand.
+
+It is the QGIS successor to the ArcGIS Pro add-ins `kyfromabove-stac-addin` (imagery and elevation)
+and `kylidar-addin` (LiDAR), merged into one dock panel with a shared area-of-interest workflow.
+
+> **Status: experimental.** The plugin is published in the QGIS plugin repository with the
+> "experimental" flag while it settles. Searching other STAC APIs (beyond Kentucky From Above) is
+> experimental on top of that.
+
+## What it does
+
+- **Search** Kentucky From Above imagery, DEM and LiDAR collections within an area of interest, with
+  date, cloud-cover, sort and max-tile filters.
+- **Add to the map** by streaming Cloud Optimized GeoTIFFs and COPC point clouds, with no download needed.
+- **Download** tiles, optionally clipped to your area of interest.
+- **Combine** results into GDAL VRT mosaics, MosaicJSON, titiler server mosaics, or Virtual Point Clouds.
+- **LiDAR point filter**: keep chosen classifications and first, last or all returns.
+- **Band combinations and indices** (NDVI or your own formula) from a right-click on a raster result.
+- **Export as script**: a notebook, Python or shell script that repeats the download outside QGIS.
+- **Other STAC APIs** (experimental): search any public STAC API from STAC Index or by URL, including
+  Microsoft Planetary Computer (assets signed automatically) and `s3://` assets.
+
+The [full documentation](https://ianhorn.github.io/kentucky-stac/) (also in [`docs/index.html`](docs/index.html))
+covers every tool, filter and known issue in detail.
+
+## Requirements
+
+- **QGIS 3.34 or later**, including QGIS 4 (Qt6). The 3.44 LTR on OSGeo4W is the build it is developed on.
+- **PDAL on your `PATH`**, for clipping point clouds, filtering by class or return, and building Virtual
+  Point Clouds. QGIS from the OSGeo4W installer includes it. Everything else uses only QGIS's bundled
+  Python, GDAL and network stack, so there is nothing to `pip install`.
+
+## Install
+
+1. In QGIS open **Plugins → Manage and Install Plugins → Settings** and tick **Show also experimental plugins**.
+2. Search for **Kentucky STAC** under **All** and click **Install Plugin**.
+3. Open it from **Plugins → Kentucky STAC** (or the toolbar icon).
+
+It is also listed at <https://plugins.qgis.org/plugins/kentucky_stac/>, where each version's zip can be
+used with **Install from ZIP**.
+
+## Quick start
+
+1. Set an area of interest with the tools at the top of the dock: draw a point, line or polygon, select
+   existing features, or use the current map extent.
+2. On the **Imagery / DEM** or **LiDAR Pointcloud** tab, tick one or more collections.
+3. Click **Search area of interest**.
+4. Select tiles in the results list, then add them to the map, download them, build a mosaic, or export a script.
+
+## Getting help
+
+- **Documentation:** <https://ianhorn.github.io/kentucky-stac/>
+- **Bugs and requests:** [open an issue](https://github.com/ianhorn/kentucky-stac/issues). The **Feedback**
+  button in the dock opens a pre-filled one with your QGIS, plugin and OS versions attached.
+- **Tiles drawn in the wrong place** is a known coordinate-system issue with a workaround; see
+  "Known issues" in the documentation.
 
 ## Development
 
-The plugin lives in `kentucky_stac/`. For live testing, junction that folder into a QGIS profile's
-`python\plugins` directory (LTR and latest each have their own profile), then use the Plugin
-Reloader plugin to pick up code changes.
+The plugin is the `kentucky_stac/` folder. It is deliberately stdlib-only: runtime dependencies come from
+QGIS's own Python.
+
+**Live testing.** Symlink (or junction, on Windows) `kentucky_stac/` into a QGIS profile's
+`python/plugins` directory, enable it, and use the
+[Plugin Reloader](https://plugins.qgis.org/plugins/plugin_reloader/) plugin to pick up code changes. Don't
+use *Uninstall* or *Install from ZIP* on a linked folder; they would delete your working copy.
+
+**Checks.** CI runs the same commands you can run locally:
+
+```sh
+pip install ruff pytest
+ruff check .
+python -m pytest
+```
+
+Tests that import `qgis` (for example the PDAL pipeline tests) are skipped when QGIS isn't installed.
+CI runs the full suite again inside the `qgis/qgis` LTR and stable containers, so those tests do run on
+every push and pull request. To run them locally, use QGIS's own Python.
+
+**Error handling.** Catch the specific exceptions a call can raise. A deliberate catch-all, such as
+a worker thread or a UI action that must not raise into Qt, carries a
+`# noqa: BLE001 - <why>` comment, and worker-thread ones also call `diagnostics.log_exception` so the
+traceback reaches QGIS's Log Messages panel. Ruff enforces this.
+
+## Releasing
+
+1. Bump `version` in **both** `kentucky_stac/metadata.txt` and `pyproject.toml`, and add the new entry at
+   the top of `changelog` in `metadata.txt`. A test fails if these drift apart.
+2. Merge to `main` once CI is green and tag the release (`vX.Y.Z`).
+3. Zip the `kentucky_stac/` folder (the folder itself must be the zip's single top-level entry) and upload it at
+   <https://plugins.qgis.org/plugins/kentucky_stac/> via **Manage**. To move out of "experimental", remove
+   `experimental=True` from `metadata.txt` in the stable release.
 
 ## License
 
-GPL-2.0-or-later.
+GPL-2.0-or-later. See [LICENSE](LICENSE).
