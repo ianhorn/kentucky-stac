@@ -25,8 +25,8 @@ from qgis.PyQt.QtGui import QBrush, QColor
 from qgis.PyQt.QtWidgets import QAbstractItemView, QTreeWidget
 
 from .results_layer import KIND_PROPERTY, geojson_to_geometry
-from .theme import mix_colors
 from .stac import Item
+from .theme import mix_colors
 
 _HOVER_SHARE = 0.5  # how much of the theme's highlight colour is mixed into the list's background
 _MIN_INTERVAL = 0.03  # seconds between hover lookups while the mouse moves

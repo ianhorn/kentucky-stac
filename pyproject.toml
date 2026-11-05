@@ -17,3 +17,11 @@ dev = [
 line-length = 100
 target-version = "py39"
 extend-exclude = ["kentucky_stac/ext_libs"]
+
+[tool.ruff.lint]
+# Explicit so a ruff upgrade can't silently widen the ruleset: pyflakes, pycodestyle errors and
+# warnings (E501 line length is left to the formatter-free 100 col soft limit), import order.
+select = ["E4", "E7", "E9", "F", "W", "I"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -16,7 +16,7 @@ import hashlib
 import json
 import os
 from html import escape  # also valid XML escaping (& < > and quotes)
-from typing import Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from qgis.core import (
     QgsApplication,
@@ -116,7 +116,7 @@ def _write_stack_vrt(sources: Sequence[Tuple[str, int]], out_path: str) -> None:
     ref_path = min(grids, key=lambda p: abs(grids[p][2][1]))  # smallest pixel width
     width, height, gt = grids[ref_path]
     west, north = gt[0], gt[3]
-    east, south = west + gt[1] * width, north + gt[5] * height
+    east = west + gt[1] * width
     for path, (w, h, g) in grids.items():
         tolerance = abs(g[1]) * 1.5
         if abs(g[0] - west) > tolerance or abs(g[3] - north) > tolerance or abs(g[0] + g[1] * w - east) > tolerance:

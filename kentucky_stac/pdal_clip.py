@@ -40,7 +40,14 @@ import shutil
 import subprocess
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from qgis.core import QgsCoordinateReferenceSystem, QgsCoordinateTransform, QgsGeometry, QgsProject, QgsRectangle, QgsTask
+from qgis.core import (
+    QgsCoordinateReferenceSystem,
+    QgsCoordinateTransform,
+    QgsGeometry,
+    QgsProject,
+    QgsRectangle,
+    QgsTask,
+)
 
 _PDAL_TIMEOUT = 600  # seconds per tile -- a local crop of one tile, generous but not unbounded
 

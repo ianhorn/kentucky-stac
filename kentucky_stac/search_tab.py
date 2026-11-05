@@ -21,11 +21,11 @@ from qgis.PyQt.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QFileDialog,
-    QMenu,
     QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -36,7 +36,17 @@ from qgis.PyQt.QtWidgets import (
     QWidget,
 )
 
+from . import auth, azure, scripts, signing
 from .aoi import AoiState, wkt_parts
+from .assets_dialog import AssetsDialog
+from .band_layers import combination_spec, index_spec, stack_spec
+from .bands import (
+    COMBINATIONS,
+    INDICES,
+    available_combinations,
+    available_indices,
+    item_bands,
+)
 from .catalog import bbox_2d, format_size, primary_asset, thumbnail_href
 from .downloads import (
     MAX_DOWNLOAD_CONCURRENCY,
@@ -48,15 +58,10 @@ from .downloads import (
     filename_from_href,
     plan_downloads,
 )
-from . import auth, azure, signing
 from .filters_panel import FiltersPanel
+from .index_dialog import IndexDialog, saved_formulas
 from .item_json import item_json_text, item_to_friendly_html, json_to_html
 from .json_card import ItemJsonHover
-from .assets_dialog import AssetsDialog
-from .band_layers import combination_spec, index_spec, stack_spec
-from .bands import COMBINATIONS, INDICES, Band, available_combinations, available_indices, item_bands
-from .index_dialog import IndexDialog, saved_formulas
-from .map_link import MapResultsLink
 from .layers import (
     AddLayersTask,
     LayerSpec,
@@ -68,14 +73,20 @@ from .layers import (
     union_bbox,
     with_point_filter,
 )
+from .map_link import MapResultsLink
 from .mosaic import BuildMosaicsTask, plan_mosaics
-from . import scripts
 from .mosaicjson import native_gsd, plan_mosaicjson, write_mosaicjson
 from .pdal_clip import CropPointCloudsTask, clipped_path, filtered_path, pdal_available
 from .point_filter import PointFilter
 from .point_filter_panel import PointFilterPanel
 from .results_layer import select_results, show_results
-from .server_layers import RegisterMosaicsTask, add_cog_layers, add_search_layer, plan_server_mosaics, tiler_url
+from .server_layers import (
+    RegisterMosaicsTask,
+    add_cog_layers,
+    add_search_layer,
+    plan_server_mosaics,
+    tiler_url,
+)
 from .sources import DEFAULT_SOURCE, ApiSource, is_default_uri, source_name, tiler_for
 from .stac import Collection, Item, SearchQuery
 from .tasks import PAGE_SIZE, SearchTask

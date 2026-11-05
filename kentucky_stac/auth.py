@@ -24,7 +24,6 @@ from qgis.PyQt.QtNetwork import QNetworkRequest
 
 from .sources import ApiSource, normalize_url
 
-
 _by_source: Dict[str, str] = {}  # normalised API base URL -> authentication config id
 
 

@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint-and-test:
+    name: Lint and plain tests (Python ${{ matrix.python }})
+    # ubuntu-latest moved to 26.04, which has no Python 3.9 build; 24.04 still does.
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # QGIS 3.34 LTR bundles 3.9+; 3.12 stands in for newer QGIS builds.
+        python: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install ruff pytest
+      - run: ruff check .
+      - run: python -m pytest -q
+
+  qgis-tests:
+    name: Tests inside QGIS (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["qgis/qgis:ltr", "qgis/qgis:stable"]
+    container: ${{ matrix.image }}
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m pip install --break-system-packages pytest || python3 -m pip install pytest
+      # With qgis importable the PDAL pipeline tests run instead of being skipped.
+      - run: python3 -m pytest -q -rs
