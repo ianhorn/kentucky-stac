@@ -11,9 +11,7 @@ exactly the tiles you need to the map, or download them, without browsing catalo
 It is the QGIS successor to the ArcGIS Pro add-ins `kyfromabove-stac-addin` (imagery and elevation)
 and `kylidar-addin` (LiDAR), merged into one dock panel with a shared area-of-interest workflow.
 
-> **Status: experimental.** The plugin is published in the QGIS plugin repository with the
-> "experimental" flag while it settles. Searching other STAC APIs (beyond Kentucky From Above) is
-> experimental on top of that.
+> **Note:** searching other STAC APIs (beyond Kentucky From Above) is still experimental.
 
 ## What it does
 
@@ -40,8 +38,8 @@ covers every tool, filter and known issue in detail.
 
 ## Install
 
-1. In QGIS open **Plugins → Manage and Install Plugins → Settings** and tick **Show also experimental plugins**.
-2. Search for **Kentucky STAC** under **All** and click **Install Plugin**.
+1. In QGIS open **Plugins → Manage and Install Plugins** and search for **Kentucky STAC** under **All**.
+2. Click **Install Plugin**.
 3. Open it from **Plugins → Kentucky STAC** (or the toolbar icon).
 
 It is also listed at <https://plugins.qgis.org/plugins/kentucky_stac/>, where each version's zip can be
@@ -96,11 +94,11 @@ traceback reaches QGIS's Log Messages panel. Ruff enforces this.
    the top of `changelog` in `metadata.txt`. A test fails if these drift apart.
 2. Run through [`QA_CHECKLIST.md`](QA_CHECKLIST.md) in QGIS (CI can't click through the live catalog), merge to `main` once CI is green, then tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`.
 3. The **Release** workflow checks the tag matches `metadata.txt`, re-runs lint and tests, builds
-   `kentucky_stac-X.Y.Z.zip`, and attaches it to a GitHub release (marked pre-release while the plugin is
-   experimental) with the changelog entry as its notes.
+   `kentucky_stac-X.Y.Z.zip`, and attaches it to a GitHub release with the changelog entry as its notes
+   (marked pre-release only if `metadata.txt` has `experimental=True`).
 4. Upload that zip at <https://plugins.qgis.org/plugins/kentucky_stac/> via **Manage**. This step is manual
-   because it needs your OSGeo login. To move out of "experimental", remove `experimental=True` from
-   `metadata.txt` in the stable release.
+   because it needs your OSGeo login. The plugin has been stable since 0.2.0; add `experimental=True` to
+   `metadata.txt` only for a release that should be hidden from default installs.
 
 To build the zip locally: `python scripts/package.py` writes it to `dist/`.
 
