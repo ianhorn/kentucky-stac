@@ -21,6 +21,16 @@ def test_zip_has_one_top_level_folder_and_no_bytecode(tmp_path):
     assert not any("__pycache__" in name or name.endswith(".pyc") for name in names)
 
 
+def test_zip_entries_are_plain_data_files_with_unix_line_endings(tmp_path):
+    """On Windows ZipFile.write marks every entry rwxrwxrwx, which the registry's permissions check flags."""
+    target = package.build_zip(tmp_path)
+    with zipfile.ZipFile(target) as archive:
+        for info in archive.infolist():
+            assert info.create_system == 3, info.filename
+            assert info.external_attr >> 16 == 0o100644, (info.filename, oct(info.external_attr >> 16))
+            assert b"\r\n" not in archive.read(info), info.filename
+
+
 def test_release_notes_are_the_current_versions_entry():
     entry = package.latest_changelog_entry()
     assert entry.startswith(package.plugin_version() + " - ")

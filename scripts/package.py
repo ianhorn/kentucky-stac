@@ -54,7 +54,17 @@ def build_zip(out_dir: Path) -> Path:
     target = out_dir / f"kentucky_stac-{plugin_version()}.zip"
     with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
         for path in plugin_files():
-            archive.write(path, Path("kentucky_stac") / path.relative_to(PLUGIN_DIR))
+            name = (Path("kentucky_stac") / path.relative_to(PLUGIN_DIR)).as_posix()
+            data = path.read_bytes()
+            if b"\0" not in data:
+                data = data.replace(b"\r\n", b"\n")  # one line ending whatever the checkout (Windows adds CRLF)
+            # Spell the permissions out: ZipFile.write on Windows records every file as rwxrwxrwx (0o777), which the
+            # registry's file-permissions check flags on each entry. A plain data file is rw-r--r--.
+            info = zipfile.ZipInfo.from_file(path, name)
+            info.create_system = 3  # Unix, so the mode below is read
+            info.external_attr = 0o100644 << 16
+            info.compress_type = zipfile.ZIP_DEFLATED
+            archive.writestr(info, data)
     return target
 
 
