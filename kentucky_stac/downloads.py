@@ -20,6 +20,7 @@ from qgis.PyQt.QtNetwork import QNetworkRequest
 
 from . import auth, s3, signing
 from .catalog import bbox_2d, primary_asset
+from .diagnostics import log_exception
 from .gdal_setup import setup_gdal
 from .stac import Item
 
@@ -105,7 +106,7 @@ def head_size(url: str, authcfg: str = "") -> Optional[int]:
     if s3.is_s3(url) and (authcfg or s3.credentials_available()):
         try:
             return _signed_size(url)
-        except Exception:
+        except (ImportError, RuntimeError, ValueError, TypeError):  # GDAL raises RuntimeError
             return None
     url = signing.fetchable_url(url)  # s3:// -> https, Azure blob -> signed
     try:
@@ -117,7 +118,7 @@ def head_size(url: str, authcfg: str = "") -> Optional[int]:
             return None
         value = bytes(blocking.reply().rawHeader(b"Content-Length"))
         return int(value) if value else None
-    except Exception:
+    except (ValueError, TypeError, RuntimeError):
         return None
 
 
@@ -195,7 +196,8 @@ class _S3FetchTask(QgsTask):
                 self.error = f"incomplete download ({self.done_bytes} of {self.total_bytes} bytes)"
                 return False
             return True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - a worker thread must not let an exception escape
+            log_exception("A download failed")
             self.error = str(e)
             return False
         finally:

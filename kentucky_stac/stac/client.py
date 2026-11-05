@@ -11,6 +11,7 @@ proxy and CA settings apply.
 from __future__ import annotations
 
 import gzip
+import http.client
 import json
 import urllib.error
 import urllib.parse
@@ -54,7 +55,7 @@ def urllib_transport(
     except urllib.error.HTTPError as e:
         try:
             detail = e.read().decode("utf-8", "replace")
-        except Exception:
+        except (OSError, http.client.HTTPException):
             detail = ""
         raise StacError(f"STAC API {e.code} {e.reason}: {detail}", status=e.code) from e
     except (urllib.error.URLError, OSError) as e:

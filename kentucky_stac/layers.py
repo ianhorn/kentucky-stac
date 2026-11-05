@@ -7,6 +7,7 @@ worker threads and only added to the project on the main thread.
 from __future__ import annotations
 
 import os
+import struct
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
@@ -16,6 +17,7 @@ from qgis.core import (
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
     QgsCoordinateTransformContext,
+    QgsCsException,
     QgsMapLayer,
     QgsPointCloudLayer,
     QgsProject,
@@ -26,6 +28,7 @@ from qgis.core import (
 
 from . import auth, s3, signing
 from .catalog import DEFAULT_CRS, bbox_2d, can_add_to_map, primary_asset
+from .diagnostics import log_exception
 from .gdal_setup import setup_gdal
 from .stac import Item
 
@@ -192,7 +195,7 @@ def flat_crs(crs: QgsCoordinateReferenceSystem) -> QgsCoordinateReferenceSystem:
             if named.isValid():
                 return named
         return flat
-    except Exception:
+    except (ImportError, RuntimeError, ValueError, TypeError):  # GDAL raises RuntimeError
         return crs
 
 
@@ -203,7 +206,7 @@ def _wgs84_extent(layer: QgsMapLayer) -> Optional[QgsRectangle]:
             _fresh_crs(layer.crs()), QgsCoordinateReferenceSystem("EPSG:4326"), QgsCoordinateTransformContext()
         )
         return transform.transformBoundingBox(layer.extent())
-    except Exception:
+    except QgsCsException:
         return None
 
 
@@ -259,7 +262,7 @@ def _horizontal_epsg(path: str) -> str:
             srs.AutoIdentifyEPSG()
             code = srs.GetAuthorityCode(None)
         return str(code or "")
-    except Exception:
+    except (ImportError, RuntimeError, ValueError, TypeError):  # GDAL raises RuntimeError
         return ""
 
 
@@ -273,8 +276,6 @@ def _las_horizontal_epsg(url: str) -> str:
     if not url.lower().startswith(("http://", "https://")):
         return ""
     try:
-        import struct
-
         from osgeo import gdal, osr
 
         handle = gdal.VSIFOpenL("/vsicurl/" + url, "rb")
@@ -307,7 +308,7 @@ def _las_horizontal_epsg(url: str) -> str:
                     srs.AutoIdentifyEPSG()
                     code = srs.GetAuthorityCode(None)
                 return str(code or "")
-    except Exception:
+    except (ImportError, RuntimeError, ValueError, TypeError, struct.error):
         return ""
     return ""
 
@@ -324,7 +325,7 @@ def _point_cloud_epsg(layer: QgsPointCloudLayer) -> str:
             authid = crs.horizontalCrs().authid()
             if authid.upper().startswith("EPSG:"):
                 return authid.split(":", 1)[1]
-    except Exception:
+    except (AttributeError, RuntimeError):  # RuntimeError: the wrapped C++ layer is already gone
         return ""
     return ""
 
@@ -356,7 +357,8 @@ def _build_layer(spec: LayerSpec) -> Tuple[Optional[QgsMapLayer], Optional[str]]
         # Layers must belong to the main thread before they are added to the project.
         layer.moveToThread(QgsApplication.instance().thread())
         return layer, None
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - a worker thread must not let an exception escape
+        log_exception("Could not create the layer")
         return None, str(e)
 
 

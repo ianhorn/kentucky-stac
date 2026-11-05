@@ -644,7 +644,7 @@ class SearchTab(QWidget):
                 QgsCoordinateReferenceSystem("EPSG:4326"), self._canvas.mapSettings().destinationCrs(), QgsProject.instance()
             )
             rect = transform.transformBoundingBox(rect)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - a UI action reports any failure to the user instead of raising into Qt
             self._warn(f"Could not zoom to the collection: {e}")
             return
         if rect.isEmpty():
@@ -702,7 +702,7 @@ class SearchTab(QWidget):
         collections = self.selected_collections()
         try:
             intersects = self._aoi.geojson_geometry(QgsProject.instance().transformContext())
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - a UI action reports any failure to the user instead of raising into Qt
             self._warn(f"Could not use the area of interest: {e}")
             return
         if not collections or intersects is None:
@@ -753,7 +753,7 @@ class SearchTab(QWidget):
             self._fids = show_results(
                 self._kind, f"Ky STAC results ({self._what})", self._items, self._lidar
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - a UI action reports any failure to the user instead of raising into Qt
             self._fids = [None] * len(self._items)
             self._warn(f"Found tiles, but could not draw them on the map: {e}")
         self._link.set_results(self._items, self._fids)
@@ -1316,7 +1316,7 @@ class SearchTab(QWidget):
             try:
                 clip_wkt = self._aoi.geometry_wgs84(QgsProject.instance().transformContext()).asWkt()
                 notes.append("clipped to the area of interest")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - a UI action reports any failure to the user instead of raising into Qt
                 self._warn(f"Could not use the area of interest to clip the mosaic, building it unclipped instead: {e}")
 
         self._pending_notes = notes
@@ -1406,7 +1406,7 @@ class SearchTab(QWidget):
                     written += 1
                 else:
                     failed.append((spec.name, "no tile had a usable footprint"))
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - a UI action reports any failure to the user instead of raising into Qt
                 failed.append((spec.name, str(e)))
 
         notes = [f"saved to {folder}"]
@@ -1619,7 +1619,7 @@ class SearchTab(QWidget):
             try:
                 aoi_geom = self._aoi.geometry_wgs84(QgsProject.instance().transformContext())
                 parts = wkt_parts(aoi_geom) if aoi_geom is not None else []
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - a UI action reports any failure to the user instead of raising into Qt
                 self._warn(f"Could not use the area of interest to clip; leaving the tiles unclipped: {e}")
         limits = point_filter.pdal_limits() if point_filter is not None else ""
         expression = point_filter.pdal_expression() if point_filter is not None else ""
