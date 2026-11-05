@@ -13,7 +13,7 @@ _spec.loader.exec_module(package)
 def test_zip_has_one_top_level_folder_and_no_bytecode(tmp_path):
     (ROOT / "kentucky_stac" / "__pycache__").mkdir(exist_ok=True)
     target = package.build_zip(tmp_path)
-    assert target.name == f"kentucky_stac.{package.plugin_version()}.zip"
+    assert target.name == f"kentucky_stac-{package.plugin_version()}.zip"
     with zipfile.ZipFile(target) as archive:
         names = archive.namelist()
     assert {name.split("/")[0] for name in names} == {"kentucky_stac"}
