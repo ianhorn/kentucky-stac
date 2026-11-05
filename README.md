@@ -94,10 +94,15 @@ traceback reaches QGIS's Log Messages panel. Ruff enforces this.
 
 1. Bump `version` in **both** `kentucky_stac/metadata.txt` and `pyproject.toml`, and add the new entry at
    the top of `changelog` in `metadata.txt`. A test fails if these drift apart.
-2. Merge to `main` once CI is green and tag the release (`vX.Y.Z`).
-3. Zip the `kentucky_stac/` folder (the folder itself must be the zip's single top-level entry) and upload it at
-   <https://plugins.qgis.org/plugins/kentucky_stac/> via **Manage**. To move out of "experimental", remove
-   `experimental=True` from `metadata.txt` in the stable release.
+2. Merge to `main` once CI is green, then tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+3. The **Release** workflow checks the tag matches `metadata.txt`, re-runs lint and tests, builds
+   `kentucky_stac.X.Y.Z.zip`, and attaches it to a GitHub release (marked pre-release while the plugin is
+   experimental) with the changelog entry as its notes.
+4. Upload that zip at <https://plugins.qgis.org/plugins/kentucky_stac/> via **Manage**. This step is manual
+   because it needs your OSGeo login. To move out of "experimental", remove `experimental=True` from
+   `metadata.txt` in the stable release.
+
+To build the zip locally: `python scripts/package.py` writes it to `dist/`.
 
 ## License
 
