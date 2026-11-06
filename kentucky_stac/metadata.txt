@@ -5,7 +5,7 @@ supportsQt6=True
 qgisMaximumVersion=4.99
 description=Search, load and download Kentucky From Above imagery, elevation and LiDAR via STAC.
 about=Search the Kentucky From Above STAC API (and, experimentally, other public STAC APIs) for imagery, DEM and LiDAR tiles within an area of interest. Add tiles to the map by streaming COG/COPC files, download them, combine them into GDAL VRT mosaics, MosaicJSON, titiler server mosaics or Virtual Point Clouds, clip them to your area of interest, or export a notebook/Python/shell script that downloads them. Requires PDAL (included with QGIS from OSGeo4W) on PATH for LiDAR clipping and virtual point cloud options; everything else uses QGIS's bundled Python, GDAL and network stack.
-version=0.2.0
+version=0.2.1
 author=Ian Horn
 email=ianhorn17@gmail.com
 tracker=https://github.com/ianhorn/kentucky-stac/issues
@@ -14,7 +14,8 @@ homepage=https://ianhorn.github.io/kentucky-stac/
 license=GPL-2.0-or-later
 icon=icon.svg
 tags=stac,kentucky,lidar,copc,imagery,dem
-changelog=0.2.0 - First stable release: checked by hand against the live Kentucky From Above catalog, with automated tests (including inside QGIS), CI and a documented release process. Searching other STAC APIs is still experimental.
+changelog=0.2.1 - A point cloud from a source that needs a login is no longer streamed (QGIS's point cloud reader can't send a login, so it only failed with "Unable to open"): Add to map and Virtual Point Cloud say so and leave it out, and Download sends the login. Documentation updated.
+  0.2.0 - First stable release: checked by hand against the live Kentucky From Above catalog, with automated tests (including inside QGIS), CI and a documented release process. Searching other STAC APIs is still experimental.
   0.1.16 - The release zip now stores plain file permissions (it was marking every file as executable and world-writable, which the registry's permissions check flagged); no change in behaviour.
   0.1.15 - Unexpected failures in background tasks (adding layers, mosaics, downloads, searches) now write a full traceback to the QGIS Log Messages panel (Kentucky STAC tab), and quiet fallbacks catch only the errors they expect, so real bugs are no longer swallowed. No change to how the plugin is used.
   0.1.14 - Clears the registry's security scan findings (SHA1 used only for cache file names, XML escaping, a silent except); no change in behaviour.
