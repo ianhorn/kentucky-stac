@@ -19,10 +19,10 @@ from qgis.core import (  # noqa: E402
     QgsProject,
 )
 
-from kentucky_stac import search_tab  # noqa: E402
+from kentucky_stac import auth, search_tab  # noqa: E402
 from kentucky_stac.aoi import AoiState  # noqa: E402
 from kentucky_stac.sources import DEFAULT_SOURCE, ApiSource  # noqa: E402
-from kentucky_stac.stac import Collection, Item  # noqa: E402
+from kentucky_stac.stac import Asset, Collection, Item  # noqa: E402
 
 OTHER = ApiSource("Other API", "https://other.example/stac")
 POLYGON = "POLYGON((-85 37, -84 37, -84 38, -85 38, -85 37))"
@@ -290,3 +290,52 @@ def test_server_mosaic_needs_a_tile_server_for_another_source(tab):
     assert "Other API" in tab.server_mosaic_button.toolTip()
     tab.set_sources([DEFAULT_SOURCE, ApiSource(OTHER.name, OTHER.base_uri, tiler_url="https://titiler.example")])
     assert tab.server_mosaic_button.isEnabled()
+
+
+@pytest.fixture
+def lidar_tab(qgis_app, aoi, bar):
+    widget = search_tab.SearchTab("point cloud", "test-lidar", True, aoi, message_bar=bar)
+    yield widget
+    widget.shutdown()
+    QgsProject.instance().clear()
+
+
+def _copc_item(iid, source):
+    item = _item(iid, "laz-phase2")
+    item.source = source
+    item.assets = {"data": Asset(href=f"https://files.example/{iid}.copc.laz", type="application/vnd.laszip+copc")}
+    return item
+
+
+def test_a_point_cloud_that_needs_a_login_is_not_streamed(lidar_tab, bar):
+    """QGIS's COPC reader ignores a login however it is passed, so streaming would only fail with an obscure error."""
+    sources = [DEFAULT_SOURCE, ApiSource(OTHER.name, OTHER.base_uri, auth_cfg="abc1234")]
+    lidar_tab.set_sources(sources)
+    auth.set_sources(sources)  # the dock registers each source's login here, as it does at run time
+    try:
+        lidar_tab._on_results([_copc_item("a", OTHER.base_uri)], 1, False, None)
+        lidar_tab.tree.selectAll()
+        lidar_tab.add_to_map()
+        assert lidar_tab._add_task is None
+        assert any("needs a login" in text and "download" in text for text in bar.texts()), bar.texts()
+    finally:
+        auth.set_sources([DEFAULT_SOURCE])
+
+
+def test_a_point_cloud_without_a_login_is_still_streamed(lidar_tab, bar):
+    lidar_tab.set_sources([DEFAULT_SOURCE, OTHER])
+    lidar_tab._on_results([_copc_item("a", OTHER.base_uri)], 1, False, None)
+    lidar_tab.tree.selectAll()
+    lidar_tab.add_to_map()
+    assert lidar_tab._add_task is not None
+    lidar_tab._add_task.cancel()
+    lidar_tab._add_task = None
+
+
+def test_the_point_filter_blocks_an_add_with_no_class_ticked(lidar_tab, bar):
+    lidar_tab._on_results([_copc_item("a", OTHER.base_uri)], 1, False, None)
+    lidar_tab.tree.selectAll()
+    lidar_tab.point_filter.set_classes(set())
+    lidar_tab.add_to_map()
+    assert lidar_tab._add_task is None
+    assert any("keeps nothing" in text for text in bar.texts())

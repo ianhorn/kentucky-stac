@@ -420,7 +420,12 @@
         so another site never receives it. Passwords and keys stay in QGIS&rsquo;s encrypted Authentication database; the plugin keeps just the configuration&rsquo;s id.</li>
       <li>A refused request says so: <em>a login was sent; check that it is the right one</em>, or <em>this source may need a login</em> when none was set.</li>
     </ul>
-    <p>Not covered yet: point cloud (COPC) files that need a login, and certificate (PKI) configurations for reading files.
+    <p><strong>Point clouds behind a login can be downloaded but not streamed.</strong> QGIS&rsquo;s point cloud reader has no way to
+      send a login (tested with header and basic logins on QGIS 3.44 and 4.2), so <em>Add selected to map</em> and
+      <em>Add selected as Virtual Point Cloud</em> say so for such a tile and leave it out; <em>Download selected&hellip;</em> sends the
+      login, and the downloaded file can then be added. Rasters, the catalog requests, file sizes and downloads do use the login
+      (checked against a server that demands a Bearer header and one that demands basic authentication).</p>
+    <p>Not covered yet: certificate (PKI) configurations for reading files.
       Credentials found in the environment or <code>~/.aws/credentials</code> are still used for <code>s3://</code> files without any setting, as before.</p>
   </section>
 

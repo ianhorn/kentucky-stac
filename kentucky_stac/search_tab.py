@@ -101,6 +101,13 @@ _INDEX_ROLE = Qt.ItemDataRole.UserRole + 1  # a collection row's index into Sear
 CONFIRM_ABOVE = 25  # ask before adding more layers than this at once
 
 
+def _login_stream_note(n: int) -> str:
+    return (
+        f"{n} point cloud tile{'s need' if n != 1 else ' needs'} a login, which QGIS can't use when streaming; "
+        "download to view"
+    )
+
+
 class WrapButton(QPushButton):
     """A QPushButton whose label wraps onto multiple lines instead of being silently clipped --
     QPushButton has no built-in word-wrap, so the label is a child QLabel (which does) rather than
@@ -943,7 +950,9 @@ class SearchTab(QWidget):
                 self._warn("Wait for the current task to finish first.")
                 return
             spec = asset_layer_spec(item, key)
-            if spec is None:
+            if asset.is_copc and auth.cfg_for_source(item.source):
+                self._info(_login_stream_note(1) + ".")
+            elif spec is None:
                 self._warn(f"Asset '{key}' can't be shown on the map; download it instead.")
             elif already_on_map([spec]):
                 self._info(f"Asset '{key}' of {item.id} is already on the map.")
@@ -1119,6 +1128,8 @@ class SearchTab(QWidget):
         if self._busy() or self._filter_blocks():
             return
         items = self.selected_items()
+        login_tiles = sum(1 for i in items if self._needs_login(i))
+        items = [i for i in items if not self._needs_login(i)]
         specs, skipped = layer_specs(items, self._lidar)
         point_filter = self._active_filter()
         if point_filter is not None:
@@ -1135,6 +1146,8 @@ class SearchTab(QWidget):
                 f"{n} tile{'s are' if n != 1 else ' is'} plain LAZ/LAS, which QGIS can't stream; "
                 "download to view"
             )
+        if login_tiles:
+            notes.append(_login_stream_note(login_tiles))
         if duplicates:
             notes.append(f"{len(duplicates)} already on the map")
         if not specs:
@@ -1225,11 +1238,19 @@ class SearchTab(QWidget):
         self._force_add_when_done = True
         self.start_download(items, folder)
 
+    def _needs_login(self, item: Item) -> bool:
+        """A point cloud whose source has a login. QGIS's COPC reader can't send one (tested: the login is
+        ignored however it is passed), so such a tile can only be downloaded, not streamed."""
+        return self._lidar and bool(auth.cfg_for_source(item.source))
+
     def _streamed_vpc(self, items: List[Item]):
         entries = []
         skipped = 0
         for item in items:
             asset = primary_asset(item, True)
+            if self._needs_login(item):
+                self._info(_login_stream_note(1) + ".")
+                return
             if asset is not None and asset.href and asset.is_copc:
                 entries.append((item, signing.fetchable_url(asset.href)))
             else:
