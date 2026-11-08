@@ -46,6 +46,25 @@ def test_parse_stac_index_filters_like_the_addin():
     assert entries[1].detail.endswith("...")  # long summary truncated
 
 
+def test_parse_stac_index_lists_kentucky_then_planetary_computer_then_the_rest():
+    data = [
+        _entry("Alpha API", "https://alpha.example/v1"),
+        _entry("Zeta API", "https://zeta.example/stac"),
+        _entry("Microsoft Planetary Computer STAC API", "https://planetarycomputer.microsoft.com/api/stac/v1/"),
+        _entry("Earth Search", OTHER),
+    ]
+    entries = parse_stac_index(data)
+    assert entries[0] == BUILTIN_ENTRY
+    assert entries[1].title == "Microsoft Planetary Computer STAC API"
+    assert entries[1].url == "https://planetarycomputer.microsoft.com/api/stac/v1"
+    assert [e.title for e in entries[2:]] == ["Alpha API", "Earth Search", "Zeta API"]
+
+
+def test_parse_stac_index_without_planetary_computer_is_just_kentucky_then_a_to_z():
+    entries = parse_stac_index([_entry("Zeta API", "https://zeta.example/stac"), _entry("Alpha API", "https://alpha.example/v1")])
+    assert [e.title for e in entries[1:]] == ["Alpha API", "Zeta API"]
+
+
 def test_parse_stac_index_on_bad_data_still_offers_kentucky():
     assert parse_stac_index(None) == [BUILTIN_ENTRY]
     assert parse_stac_index({"not": "a list"}) == [BUILTIN_ENTRY]

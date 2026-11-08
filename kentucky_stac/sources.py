@@ -90,11 +90,15 @@ BUILTIN_ENTRY = CatalogEntry(
 )
 
 
+def _is_planetary_computer(url: str) -> bool:
+    return urllib.parse.urlparse(url).netloc.lower() == "planetarycomputer.microsoft.com"
+
+
 def parse_stac_index(data: Any) -> List[CatalogEntry]:
-    """Public, searchable STAC APIs from a STAC Index /api/catalogs response, sorted by title, with
-    the built-in KyFromAbove entry always first (so it's the way back after switching APIs, even if
-    STAC Index lists nothing usable). Private/protected catalogs are left out: there's no way to
-    supply credentials."""
+    """Public, searchable STAC APIs from a STAC Index /api/catalogs response: the built-in KyFromAbove
+    entry always first (so it's the way back after switching APIs, even if STAC Index lists nothing
+    usable), then Microsoft Planetary Computer when listed, then the rest sorted by title.
+    Private/protected catalogs are left out: there's no way to supply credentials."""
     entries: List[CatalogEntry] = []
     for el in data if isinstance(data, list) else []:
         if not isinstance(el, dict):
@@ -114,7 +118,10 @@ def parse_stac_index(data: Any) -> List[CatalogEntry]:
         detail = f"{url}\n\n{summary}" if summary else url
         entries.append(CatalogEntry(title, title, base, detail))
     entries.sort(key=lambda e: e.title.casefold())
-    return [BUILTIN_ENTRY] + entries
+    # Microsoft's Planetary Computer is the best-known other API, so it follows KyFromAbove; the rest stay A-Z.
+    featured = [e for e in entries if _is_planetary_computer(e.url)]
+    rest = [e for e in entries if not _is_planetary_computer(e.url)]
+    return [BUILTIN_ENTRY] + featured + rest
 
 
 def serialize_sources(sources: Iterable[ApiSource]) -> str:
