@@ -481,7 +481,7 @@
       <div class="card"><h4>Export VRT</h4><p>Stitches the selected tiles into a GDAL virtual raster, one per collection, and adds it to the map.</p></div>
       <div class="card"><h4>Export as MosaicJSON&hellip;</h4><p>Writes a <a href="https://github.com/developmentseed/mosaicjson-spec" target="_blank" rel="noopener">MosaicJSON</a> file per collection &mdash; a portable index that titiler, rio-tiler or cogeo-mosaic can read directly, with no GDAL or server round trip involved.</p></div>
       <div class="card"><h4>Add as server mosaic</h4><p>Registers a titiler-pgstac search restricted to the selected tiles and streams it &mdash; a precise crop of the statewide mosaic, with no download or local stitching.</p></div>
-      <div class="card"><h4>Export as script&hellip;</h4><p>Saves a Jupyter notebook, Python script or shell script that downloads the selected tiles outside QGIS. See <a href="#export-script">Export as script</a>.</p></div>
+      <div class="card"><h4>Export as script&hellip;</h4><p>Saves a Jupyter notebook, Python, R or shell script that downloads the selected tiles outside QGIS. See <a href="#export-script">Export as script</a>.</p></div>
       <div class="card"><h4>Right-click a tile</h4><p>Add one band, a band combination (color infrared, SWIR...) or an index (NDVI, NDWI, your own formula). See <a href="#bands-menu">Right-click: bands &amp; indices</a>.</p></div>
     </div>
   </section>
@@ -492,7 +492,7 @@
       <div class="card"><h4>Add selected to map</h4><p>Streams selected COPC tiles directly. Plain LAZ/LAS tiles (Phase 1) can't be streamed this way &mdash; download them instead.</p></div>
       <div class="card"><h4>Download selected&hellip;</h4><p>Downloads the selected point cloud tiles to a folder you choose.</p></div>
       <div class="card"><h4>Add selected as Virtual Point Cloud</h4><p>Combines the selected COPC tiles into one Virtual Point Cloud (<code>.vpc</code>) layer, streamed directly from their remote URLs &mdash; no download, no local file beyond the small index itself.</p></div>
-      <div class="card"><h4>Export as script&hellip;</h4><p>Saves a Jupyter notebook, Python script or shell script that downloads the selected tiles outside QGIS. See <a href="#export-script">Export as script</a>.</p></div>
+      <div class="card"><h4>Export as script&hellip;</h4><p>Saves a Jupyter notebook, Python, R or shell script that downloads the selected tiles outside QGIS. See <a href="#export-script">Export as script</a>.</p></div>
     </div>
     <p><strong>Add downloaded files to the map</strong> (unchecked by default) adds files after a download
       completes; two or more LiDAR tiles are combined into one Virtual Point Cloud layer automatically.</p>
@@ -578,9 +578,10 @@
     <ul>
       <li><strong>Jupyter notebook (.ipynb)</strong> &mdash; separate cells for settings, the tile list, the helper functions and the download.</li>
       <li><strong>Python script (.py)</strong> &mdash; standard library only. Set <code>DEST</code> and <code>WORKERS</code> at the top.</li>
+      <li><strong>R script (.R)</strong> &mdash; base R only, no packages. Set <code>dest</code> at the top; run with <code>Rscript</code> or in RStudio. Downloads one file at a time.</li>
       <li><strong>Shell script (.sh)</strong> &mdash; bash and curl. Usage: <code>./download_tiles.sh [folder]</code>; <code>JOBS=8</code> sets how many download at once.</li>
     </ul>
-    <p>All three skip files that already exist, turn <code>s3://</code> addresses into https, and fetch a Planetary Computer
+    <p>All four skip files that already exist, turn <code>s3://</code> addresses into https, and fetch a Planetary Computer
       SAS token when they run for Azure files (a token expires within the hour, so it can&rsquo;t be saved in the script).
       Files that aren&rsquo;t public, such as a private S3 bucket, need their own credentials, which the scripts don&rsquo;t handle.</p>
   </section>

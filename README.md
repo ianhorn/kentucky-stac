@@ -22,7 +22,7 @@ and `kylidar-addin` (LiDAR), merged into one dock panel with a shared area-of-in
 - **Combine** results into GDAL VRT mosaics, MosaicJSON, titiler server mosaics, or Virtual Point Clouds.
 - **LiDAR point filter**: keep chosen classifications and first, last or all returns.
 - **Band combinations and indices** (NDVI or your own formula) from a right-click on a raster result.
-- **Export as script**: a notebook, Python or shell script that repeats the download outside QGIS.
+- **Export as script**: a notebook, Python, R or shell script that repeats the download outside QGIS.
 - **Other STAC APIs** (experimental): search any public STAC API from STAC Index or by URL, including
   Microsoft Planetary Computer (assets signed automatically) and `s3://` assets.
 

@@ -1,5 +1,5 @@
 """Export the selected tiles as a script that downloads them outside QGIS: a Python script, a Jupyter
-notebook or a shell script. Each is self-contained (Python: standard library only; shell: bash + curl),
+notebook, an R script or a shell script. Each is self-contained (Python and R: standard library / base R only; shell: bash + curl),
 turns s3:// addresses into https, and fetches a free Planetary Computer SAS token for an Azure blob file
 when it runs, since such a token expires within the hour and so can't be baked into the script.
 
@@ -19,6 +19,7 @@ Entry = Tuple[str, str]  # (file name, url)
 KINDS = {  # kind -> (menu label, file extension, file dialog filter)
     "notebook": ("Jupyter notebook (.ipynb)", ".ipynb", "Jupyter notebook (*.ipynb)"),
     "python": ("Python script (.py)", ".py", "Python script (*.py)"),
+    "r": ("R script (.R)", ".R", "R script (*.R)"),
     "shell": ("Shell script (.sh)", ".sh", "Shell script (*.sh)"),
 }
 
@@ -189,5 +190,65 @@ def shell_script(entries: List[Entry]) -> str:
     return _SH.replace("@HEADER@", _header(entries)).replace("@LINES@", lines)
 
 
+_R = r'''#!/usr/bin/env Rscript
+# @HEADER@
+# Base R only (no packages). Run with: Rscript "<this file>"   or source() it in R / RStudio.
+# A file that is not public (e.g. a private S3 bucket) needs its own credentials, which this does not handle.
+
+# Where the files go.
+dest <- "tiles"
+
+# Large files need more than R's 60 second default timeout.
+options(timeout = max(3600, getOption("timeout")))
+
+# (file name, url) of each tile.
+tiles <- list(
+@ROWS@
+)
+
+tokens <- new.env()
+
+# An Azure blob URL (Microsoft Planetary Computer) needs a free SAS token; anything else is as-is.
+sign <- function(url) {
+  host <- tolower(sub("^https?://([^/]+).*$", "\\1", url))
+  if (!grepl("\\.blob\\.core\\.windows\\.net$", host) || grepl("sig=", url, fixed = TRUE)) return(url)
+  account <- strsplit(host, ".", fixed = TRUE)[[1]][1]
+  container <- strsplit(sub("^https?://[^/]+/", "", url), "/", fixed = TRUE)[[1]][1]
+  key <- paste(account, container)
+  if (is.null(tokens[[key]])) {
+    api <- sprintf("https://planetarycomputer.microsoft.com/api/sas/v1/token/%s/%s", account, container)
+    body <- paste(readLines(api, warn = FALSE), collapse = "")
+    token <- sub('.*"token"\\s*:\\s*"([^"]*)".*', "\\1", body)
+    tokens[[key]] <- gsub("\\u0026", "&", token, fixed = TRUE)
+  }
+  paste0(url, if (grepl("?", url, fixed = TRUE)) "&" else "?", tokens[[key]])
+}
+
+fetch <- function(tile) {
+  name <- tile[1]
+  path <- file.path(dest, name)
+  if (file.exists(path)) return(paste(name, "already there"))
+  part <- paste0(path, ".part")
+  tryCatch({
+    status <- suppressWarnings(download.file(sign(tile[2]), part, mode = "wb", quiet = TRUE))
+    if (status != 0) stop("download.file returned ", status)
+    file.rename(part, path)
+    paste(name, "downloaded")
+  }, error = function(e) {
+    if (file.exists(part)) file.remove(part)
+    paste(name, "FAILED:", conditionMessage(e))
+  })
+}
+
+dir.create(dest, showWarnings = FALSE, recursive = TRUE)
+for (tile in tiles) cat(fetch(tile), "\n", sep = "")
+'''
+
+
+def r_script(entries: List[Entry]) -> str:
+    rows = ",\n".join(f"  c({json.dumps(name)}, {json.dumps(url)})" for name, url in entries)
+    return _R.replace("@HEADER@", _header(entries)).replace("@ROWS@", rows)
+
+
 def render(kind: str, entries: List[Entry]) -> str:
-    return {"notebook": notebook, "python": python_script, "shell": shell_script}[kind](entries)
+    return {"notebook": notebook, "python": python_script, "r": r_script, "shell": shell_script}[kind](entries)

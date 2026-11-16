@@ -40,7 +40,7 @@ Use a small area (a few tiles, e.g. one county) so each step is quick. Tick the 
 - [ ] **Export as MosaicJSON** writes a file; **Add as server mosaic** adds a streaming layer.
 - [ ] **Download selected...** shows sizes, downloads, and with *Clip to area of interest* ticked (polygon AOI)
       clips to the AOI shape. *Cancel* during a download stops it cleanly.
-- [ ] **Export as script** produces a notebook / Python / shell script that downloads the same tiles when run.
+- [ ] **Export as script** produces a notebook / Python / R / shell script that downloads the same tiles when run.
 
 ## LiDAR Pointcloud tab
 

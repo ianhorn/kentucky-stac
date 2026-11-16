@@ -424,9 +424,9 @@ class SearchTab(QWidget):
             self.server_mosaic_button.setToolTip(self._server_mosaic_tip)
             self.server_mosaic_button.setEnabled(False)
             self.server_mosaic_button.clicked.connect(self.add_server_mosaic)
-        # A script (notebook, Python or shell) that downloads the selected tiles outside QGIS.
+        # A script (notebook, Python, R or shell) that downloads the selected tiles outside QGIS.
         self.script_button = WrapButton("Export as script...")
-        self.script_button.setToolTip("Save a notebook, Python script or shell script that downloads the selected tiles")
+        self.script_button.setToolTip("Save a notebook, Python script, R script or shell script that downloads the selected tiles")
         self.script_button.setEnabled(False)
         self.script_button.clicked.connect(self.export_script)
         # How many files download() at once (DownloadManager's own max_parallel) -- ported from the
@@ -1361,7 +1361,7 @@ class SearchTab(QWidget):
     # ---- script export ----------------------------------------------------------------------
 
     def export_script(self):
-        """Offer notebook / Python / shell, then save a script that downloads the selected tiles."""
+        """Offer notebook / Python / R / shell, then save a script that downloads the selected tiles."""
         if self._busy():
             return
         items = self.selected_items()

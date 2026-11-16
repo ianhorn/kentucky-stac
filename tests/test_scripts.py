@@ -28,3 +28,13 @@ def test_shell_lists_every_tile():
     sh = scripts.render("shell", ENTRIES)
     assert sh.startswith("#!/usr/bin/env bash")
     assert "a.tif|https://bkt.s3.amazonaws.com/a.tif" in sh
+
+
+def test_r_lists_every_tile_and_is_balanced():
+    r = scripts.render("r", ENTRIES)
+    assert r.startswith("#!/usr/bin/env Rscript")
+    assert 'c("a.tif", "https://bkt.s3.amazonaws.com/a.tif"),' in r
+    assert '  c("b.tif", "https://acct.blob.core.windows.net/box/b.tif")\n)' in r
+    assert "@ROWS@" not in r and "@HEADER@" not in r
+    for open_, close in ("()", "{}"):
+        assert r.count(open_) == r.count(close)
