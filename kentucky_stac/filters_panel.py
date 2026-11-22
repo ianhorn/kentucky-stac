@@ -24,6 +24,7 @@ from qgis.PyQt.QtWidgets import (
 from .stac import SearchQuery
 
 DEFAULT_MAX_TILES = 20
+DEFAULT_MAX_CLOUD = 10  # percent: the "Max cloud cover" filter starts here
 _SORTS = [("Server default", None), ("Newest first", "desc"), ("Oldest first", "asc")]
 
 
@@ -58,7 +59,7 @@ class FiltersPanel(QWidget):
         )
         self.cloud_spin = QSpinBox()
         self.cloud_spin.setRange(0, 100)
-        self.cloud_spin.setValue(20)
+        self.cloud_spin.setValue(DEFAULT_MAX_CLOUD)
         self.cloud_spin.setSuffix(" %")
         self.cloud_spin.setEnabled(False)
         self.cloud_check.toggled.connect(self.cloud_spin.setEnabled)
@@ -152,7 +153,7 @@ class FiltersPanel(QWidget):
         today = QDate.currentDate()
         self.from_date.setDate(today.addYears(-1))
         self.to_date.setDate(today)
-        self.cloud_spin.setValue(20)
+        self.cloud_spin.setValue(DEFAULT_MAX_CLOUD)
 
     # ---- using it ----------------------------------------------------------------------------
 
