@@ -27,6 +27,7 @@ from qgis.core import (
 )
 
 from . import auth, s3, signing
+from .antimeridian import crosses_antimeridian
 from .catalog import DEFAULT_CRS, bbox_2d, can_add_to_map, primary_asset
 from .diagnostics import log_exception
 from .gdal_setup import setup_gdal
@@ -124,8 +125,10 @@ def union_bbox(boxes: List[Bbox]) -> Optional[Bbox]:
 
 
 def item_bbox(item: Item) -> Optional[Bbox]:
-    bbox = item.bbox
-    return bbox_2d(bbox)
+    """The tile's lon/lat box, used to check a layer landed where the catalog says. None for a tile over the
+    antimeridian: its west edge is east of its east edge, which a plain min/max box can't hold."""
+    bbox = bbox_2d(item.bbox)
+    return None if crosses_antimeridian(bbox) else bbox
 
 
 def local_specs(paths: Iterable[str], bboxes: Optional[Dict[str, Optional[Bbox]]] = None) -> List[LayerSpec]:

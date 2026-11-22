@@ -15,6 +15,8 @@ from qgis.core import (
 )
 from qgis.PyQt.QtCore import QObject, pyqtSignal
 
+from .antimeridian import cut_at_map_edge, wrap_antimeridian
+
 WGS84 = "EPSG:4326"
 # Highest dimension first: when mixed feature types are selected, the AOI uses the highest present.
 _DIMENSION_ORDER = (Qgis.GeometryType.Polygon, Qgis.GeometryType.Line, Qgis.GeometryType.Point)
@@ -93,10 +95,13 @@ class AoiState(QObject):
         g = QgsGeometry(self.geometry)
         target = QgsCoordinateReferenceSystem(WGS84)
         if self.crs != target:
+            # An area drawn past the edge of the world is cut there first: reprojected whole, its far side wraps
+            # round and the area spans the globe the long way, so a search returns the other side of the world.
+            g = cut_at_map_edge(g, self.crs, transform_context)
             xform = QgsCoordinateTransform(self.crs, target, transform_context or QgsCoordinateTransformContext())
             if not _ok(g.transform(xform)):
                 raise ValueError("Could not reproject the area of interest to lon/lat")
-        return make_valid_same_type(g)
+        return make_valid_same_type(wrap_antimeridian(g))
 
     def geojson_geometry(self, transform_context: Optional[QgsCoordinateTransformContext] = None):
         """The AOI as a GeoJSON geometry dict (lon/lat), for a STAC "intersects" search."""

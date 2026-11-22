@@ -14,6 +14,7 @@ from qgis.core import (
     QgsVectorLayer,
 )
 
+from .antimeridian import crosses_antimeridian, wrap_antimeridian
 from .catalog import bbox_2d, format_size, primary_asset
 from .stac import Item
 
@@ -21,20 +22,36 @@ KIND_PROPERTY = "kentucky_stac/results_kind"
 
 
 def geojson_to_geometry(geometry: Optional[Dict[str, Any]], bbox: Optional[Sequence[float]] = None) -> Optional[QgsGeometry]:
-    """A Polygon/MultiPolygon GeoJSON dict as a QgsGeometry, falling back to the item's bbox."""
+    """A Polygon/MultiPolygon GeoJSON dict as a QgsGeometry, falling back to the item's bbox. A tile over the
+    antimeridian comes back cut there, one part at each edge of the world, not as one shape across all of it."""
 
     def ring(coords):
         return [QgsPointXY(c[0], c[1]) for c in coords]
 
+    flat = bbox_2d(bbox) if bbox and len(bbox) >= 4 else None
+    crossing = crosses_antimeridian(flat)
+    shape = None
     if geometry:
         kind, coords = geometry.get("type"), geometry.get("coordinates")
         if kind == "Polygon" and coords:
-            return QgsGeometry.fromPolygonXY([ring(r) for r in coords])
-        if kind == "MultiPolygon" and coords:
-            return QgsGeometry.fromMultiPolygonXY([[ring(r) for r in poly] for poly in coords])
-    if bbox and len(bbox) >= 4:
-        flat = bbox_2d(bbox)
-        return QgsGeometry.fromRect(QgsRectangle(*flat)) if flat else None
+            shape = QgsGeometry.fromPolygonXY([ring(r) for r in coords])
+        elif kind == "MultiPolygon" and coords:
+            shape = QgsGeometry.fromMultiPolygonXY([[ring(r) for r in poly] for poly in coords])
+    if shape is not None:
+        if crossing and shape.boundingBox().width() > 180.0:
+            # Not cut at the antimeridian as RFC 7946 asks, so its ring runs the long way round the world: the
+            # western longitudes belong a world to the east, where the box says the tile is.
+            for index, vertex in enumerate(list(shape.vertices())):
+                if vertex.x() < 0.0:
+                    shape.moveVertex(vertex.x() + 360.0, vertex.y(), index)
+        return wrap_antimeridian(shape)
+    if flat:
+        if crossing:
+            west, south, east, north = flat
+            return QgsGeometry.collectGeometry(
+                [QgsGeometry.fromRect(QgsRectangle(west, south, 180.0, north)), QgsGeometry.fromRect(QgsRectangle(-180.0, south, east, north))]
+            )
+        return QgsGeometry.fromRect(QgsRectangle(*flat))
     return None
 
 

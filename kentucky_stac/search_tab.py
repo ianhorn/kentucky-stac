@@ -37,6 +37,7 @@ from qgis.PyQt.QtWidgets import (
 )
 
 from . import auth, azure, scripts, signing
+from .antimeridian import crosses_antimeridian
 from .aoi import AoiState, wkt_parts
 from .assets_dialog import AssetsDialog
 from .band_layers import combination_spec, index_spec, stack_spec
@@ -627,6 +628,9 @@ class SearchTab(QWidget):
         boxes = [b for b in boxes if b is not None]
         if not boxes:
             return None
+        # A box over the antimeridian (west east of east) continues past 180: read east a world on, so the
+        # extent runs the short way across the date line (zoom_to_collections leaves that east edge alone).
+        boxes = [(b[0], b[1], b[2] + 360.0, b[3]) if crosses_antimeridian(b) else b for b in boxes]
         return (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
 
     def _update_zoom_enabled(self):
@@ -644,7 +648,8 @@ class SearchTab(QWidget):
         if extent is None or self._canvas is None:
             return
         # Web Mercator can't hold the poles, and a "whole world" extent is common: keep inside +-85 degrees.
-        west, south, east, north = max(extent[0], -180.0), max(extent[1], -85.0), min(extent[2], 180.0), min(extent[3], 85.0)
+        # (an east edge past 180 is a box over the antimeridian, see _collection_extent: kept, up to one world on)
+        west, south, east, north = max(extent[0], -180.0), max(extent[1], -85.0), min(extent[2], 540.0), min(extent[3], 85.0)
         rect = QgsRectangle(west, south, east, north)
         try:
             transform = QgsCoordinateTransform(

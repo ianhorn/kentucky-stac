@@ -315,6 +315,11 @@
       toolbar button un-highlights) rather than staying armed, since a new AOI always replaces the old one
       outright. <strong>Clear</strong> and <strong>Current extent</strong> also release a tool that was armed
       but never used.</p>
+    <p><strong>Over the antimeridian.</strong> An AOI near the edge of the world map can run past 180&deg;. It is cut there
+      and searched as two parts, one on each side (as GeoJSON asks for a shape over the antimeridian), so a search over eastern
+      New Zealand, Fiji or the Aleutians finds the tiles there and not tiles on the other side of the world. Result
+      footprints and tiles over the antimeridian are drawn at both edges of the map, and <em>Zoom to collection</em> takes the
+      short way across.</p>
   </section>
 
   <section id="searching">
