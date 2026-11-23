@@ -40,7 +40,7 @@ from . import auth, azure, scripts, signing
 from .antimeridian import crosses_antimeridian
 from .aoi import AoiState, wkt_parts
 from .assets_dialog import AssetsDialog
-from .band_layers import combination_spec, index_spec, stack_spec
+from .band_layers import combination_spec, default_color_spec, index_spec, stack_spec
 from .bands import (
     COMBINATIONS,
     INDICES,
@@ -1135,7 +1135,13 @@ class SearchTab(QWidget):
         items = self.selected_items()
         login_tiles = sum(1 for i in items if self._needs_login(i))
         items = [i for i in items if not self._needs_login(i)]
+        # A scene that is a file per band (Landsat, HLS) has no color image to add: its "primary" asset is one
+        # arbitrary band, drawn gray. Those tiles come in as the true color composite instead.
+        color_by_item = {} if self._lidar else {id(i): default_color_spec(i) for i in items}
+        color_specs = [s for s in color_by_item.values() if s is not None]
+        items = [i for i in items if color_by_item.get(id(i)) is None]
         specs, skipped = layer_specs(items, self._lidar)
+        specs = color_specs + specs
         point_filter = self._active_filter()
         if point_filter is not None:
             specs = with_point_filter(specs, point_filter.qgis_expression(), point_filter.summary())
@@ -1153,6 +1159,12 @@ class SearchTab(QWidget):
             )
         if login_tiles:
             notes.append(_login_stream_note(login_tiles))
+        if color_specs:
+            n = len(color_specs)
+            notes.append(
+                f"{n} tile{'s' if n != 1 else ''} added as true color (the catalog has one file per band; "
+                "right-click for other band combinations)"
+            )
         if duplicates:
             notes.append(f"{len(duplicates)} already on the map")
         if not specs:

@@ -481,7 +481,7 @@
   <section id="imagery-actions">
     <h2>Imagery / DEM actions</h2>
     <div class="card-grid">
-      <div class="card"><h4>Add selected to map</h4><p>Streams the selected COG tiles directly as map layers &mdash; no download.</p></div>
+      <div class="card"><h4>Add selected to map</h4><p>Streams the selected COG tiles directly as map layers &mdash; no download. A scene that is a file per band, such as Landsat or HLS on Planetary Computer, comes in as a true color composite, since it has no single color image to add.</p></div>
       <div class="card"><h4>Download selected&hellip;</h4><p>Downloads the selected tiles to a folder you choose, after checking their total size.</p></div>
       <div class="card"><h4>Export VRT</h4><p>Stitches the selected tiles into a GDAL virtual raster, one per collection, and adds it to the map.</p></div>
       <div class="card"><h4>Export as MosaicJSON&hellip;</h4><p>Writes a <a href="https://github.com/developmentseed/mosaicjson-spec" target="_blank" rel="noopener">MosaicJSON</a> file per collection &mdash; a portable index that titiler, rio-tiler or cogeo-mosaic can read directly, with no GDAL or server round trip involved.</p></div>
