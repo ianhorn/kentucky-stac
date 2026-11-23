@@ -330,3 +330,44 @@ def test_the_point_filter_blocks_an_add_with_no_class_ticked(lidar_tab, bar):
     lidar_tab.add_to_map()
     assert lidar_tab._add_task is None
     assert any("keeps nothing" in text for text in bar.texts())
+
+
+def _scene(assets):
+    item = Item.from_dict({"id": "scene", "collection": "landsat", "bbox": [-85.0, 37.0, -84.9, 37.1], "assets": assets})
+    item.source = OTHER.base_uri
+    return item
+
+
+_TIFF = "image/tiff; application=geotiff"
+
+
+def _band(name, common=None):
+    asset = {"href": f"https://files.example/{name}.tif", "type": _TIFF, "roles": ["data"]}
+    if common:
+        asset["eo:bands"] = [{"name": name, "common_name": common}]
+    return asset
+
+
+def test_add_to_map_draws_a_file_per_band_scene_as_true_color(tab, bar):
+    """Landsat and HLS on Planetary Computer: the first data asset is a quality mask or the coastal band."""
+    scene = _scene({"qa": _band("qa"), "red": _band("red", "red"), "green": _band("green", "green"), "blue": _band("blue", "blue")})
+    tab._on_results([scene], 1, False, None)
+    tab.tree.selectAll()
+    tab.add_to_map()
+    assert tab._add_task is not None
+    assert [s.name for s in tab._add_task._specs] == ["scene · True color"]
+    assert any("true color" in text for text in tab._pending_notes), tab._pending_notes
+    tab._add_task.cancel()
+    tab._add_task = None
+
+
+def test_add_to_map_leaves_a_tile_with_a_color_image_as_it_is(tab):
+    scene = _scene({"visual": _band("TCI"), "B04": _band("B04", "red"), "B03": _band("B03", "green"), "B02": _band("B02", "blue")})
+    tab._on_results([scene], 1, False, None)
+    tab.tree.selectAll()
+    tab.add_to_map()
+    assert tab._add_task is not None
+    assert [s.name for s in tab._add_task._specs] == ["scene"]
+    assert not any("true color" in text for text in tab._pending_notes)
+    tab._add_task.cancel()
+    tab._add_task = None

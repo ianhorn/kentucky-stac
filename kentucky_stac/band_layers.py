@@ -34,7 +34,7 @@ from qgis.core import (
 from qgis.PyQt.QtGui import QColor
 
 from . import auth, s3, signing
-from .bands import COMBINATIONS, Band, bands_for_formula, find_band, to_expression
+from .bands import COMBINATIONS, Band, bands_for_formula, find_band, item_bands, prefers_true_color, to_expression
 from .layers import LayerSpec, item_bbox, raster_uri
 from .stac import Item
 
@@ -212,6 +212,13 @@ def combination_spec(item: Item, name: str, bands: Sequence[Band]) -> Optional[L
         return layer
 
     return LayerSpec(layer_name, f"combination:{key}", "gdal", item_bbox(item), factory)
+
+
+def default_color_spec(item: Item) -> Optional[LayerSpec]:
+    """The true color layer "Add to map" should draw for a scene that is a file per band, or None for any tile
+    that has a color image or a multiband file of its own (see bands.prefers_true_color)."""
+    bands = item_bands(item)
+    return combination_spec(item, "True color", bands) if prefers_true_color(item, bands) else None
 
 
 # ---- indices ---------------------------------------------------------------------------------------

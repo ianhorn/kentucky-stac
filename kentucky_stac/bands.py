@@ -120,6 +120,25 @@ def find_band(bands: Sequence[Band], wanted: str) -> Optional[Band]:
     return None
 
 
+def prefers_true_color(item: Item, bands: Sequence[Band]) -> bool:
+    """True when "Add to map" would otherwise draw one arbitrary band of a scene that is a file per band.
+
+    A scene such as Landsat or HLS on Planetary Computer has no ready-made color image: its assets are one band
+    each, and the tile's "primary" asset is just the first with the data role (the quality mask `qa` for Landsat,
+    the coastal aerosol band `B01` for HLS), which draws as a gray single band. If such a tile has red, green and
+    blue bands in three separate assets, the sensible default is the true color composite. A tile with a color
+    image of its own (a `visual` asset, a `data` asset) or a multiband file (NAIP's four-band `image`) is
+    left as it is.
+    """
+    key = item.data_asset_key()
+    if key is None or key in ("data", "visual") or "visual" in item.assets[key].roles:
+        return False
+    if sum(1 for b in bands if b.asset == key) > 1:  # a multiband file draws as the color image it is
+        return False
+    picks = [find_band(bands, channel) for channel in COMBINATIONS["True color"]]
+    return all(picks) and len({p.asset for p in picks}) == 3
+
+
 def available_combinations(bands: Sequence[Band]) -> List[str]:
     return [name for name, channels in COMBINATIONS.items() if all(find_band(bands, c) for c in channels)]
 
