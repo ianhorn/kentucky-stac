@@ -489,6 +489,7 @@
       <div class="card"><h4>Export as script&hellip;</h4><p>Saves a Jupyter notebook, Python, R or shell script that downloads the selected tiles outside QGIS. See <a href="#export-script">Export as script</a>.</p></div>
       <div class="card"><h4>Right-click a tile</h4><p>Add one band, a band combination (color infrared, SWIR...) or an index (NDVI, NDWI, your own formula). See <a href="#bands-menu">Right-click: bands &amp; indices</a>.</p></div>
     </div>
+    <p><strong>Smooth drawing.</strong> Rasters added to the map (streamed, downloaded, mosaics, band combinations and indices) are drawn with bilinear resampling, which looks smoother than QGIS&rsquo;s default nearest neighbour when you zoom in or out. A raster drawn from a palette, such as land cover classes, keeps nearest neighbour so class codes are not averaged into classes that are not there. To change it for one layer, open its <em>Properties &rarr; Symbology &rarr; Resampling</em>.</p>
   </section>
 
   <section id="lidar-actions">

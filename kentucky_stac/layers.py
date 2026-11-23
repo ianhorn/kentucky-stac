@@ -14,6 +14,7 @@ from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 from qgis.core import (
     QgsApplication,
+    QgsBilinearRasterResampler,
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
     QgsCoordinateTransformContext,
@@ -244,6 +245,21 @@ def ensure_placed(layer: QgsMapLayer, bbox: Optional[Bbox]) -> bool:
     return False
 
 
+def apply_default_resampling(layer: QgsMapLayer) -> bool:
+    """Draw an imagery or elevation raster with bilinear resampling, zoomed in and out, which looks smoother than
+    QGIS's default nearest neighbour. A raster drawn from a palette (land cover classes, a scene classification
+    mask) keeps nearest neighbour, since averaging between class codes invents classes that aren't there.
+    Returns True if bilinear was set."""
+    if not isinstance(layer, QgsRasterLayer):
+        return False
+    renderer, resample = layer.renderer(), layer.resampleFilter()
+    if renderer is None or resample is None or renderer.type() == "paletted":
+        return False
+    resample.setZoomedInResampler(QgsBilinearRasterResampler())
+    resample.setZoomedOutResampler(QgsBilinearRasterResampler())
+    return True
+
+
 def _horizontal_epsg(path: str) -> str:
     """The EPSG code of a raster's horizontal CRS (its vertical datum, if any, dropped), or "". Uses GDAL/OSR
     alone, so no QGIS CRS object is created on this worker thread (those can be left empty once the thread ends)."""
@@ -417,6 +433,7 @@ class AddLayersTask(QgsTask):
             layer.setCrs(fresh)
             if spec.subset and isinstance(layer, QgsPointCloudLayer):
                 layer.setSubsetString(spec.subset)
+            apply_default_resampling(layer)
             project.addMapLayer(layer, False)
             group.addLayer(layer)
             # QGIS can apply the project CRS to a layer as it is added; verify placement again.
