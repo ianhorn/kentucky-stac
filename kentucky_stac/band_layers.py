@@ -34,7 +34,15 @@ from qgis.core import (
 from qgis.PyQt.QtGui import QColor
 
 from . import auth, s3, signing
-from .bands import COMBINATIONS, Band, bands_for_formula, find_band, item_bands, prefers_true_color, to_expression
+from .bands import (
+    COMBINATIONS,
+    Band,
+    bands_for_formula,
+    find_band,
+    item_bands,
+    prefers_true_color,
+    to_expression,
+)
 from .layers import LayerSpec, item_bbox, raster_uri
 from .stac import Item
 
