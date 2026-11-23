@@ -1,4 +1,4 @@
-"""Imagery and elevation rasters are drawn with bilinear resampling; class-coded (palette) rasters are not."""
+"""Imagery and elevation rasters are drawn with bilinear resampling when zoomed in (zoomed out stays nearest neighbour); class-coded (palette) rasters are not."""
 
 import os
 import time
@@ -38,17 +38,17 @@ def _resamplers(layer):
     return (zoomed_in.type() if zoomed_in else None, zoomed_out.type() if zoomed_out else None)
 
 
-def test_an_rgb_raster_gets_bilinear_both_ways(qgis_app, tmp_path):
+def test_an_rgb_raster_gets_bilinear_when_zoomed_in_only(qgis_app, tmp_path):
     layer = QgsRasterLayer(_tif(tmp_path / "rgb.tif"), "rgb", "gdal")
     assert layer.isValid() and _resamplers(layer) == (None, None)  # QGIS's own default is nearest neighbour
     assert apply_default_resampling(layer) is True
-    assert _resamplers(layer) == ("bilinear", "bilinear")
+    assert _resamplers(layer) == ("bilinear", None)
 
 
 def test_a_single_band_elevation_raster_gets_bilinear(qgis_app, tmp_path):
     layer = QgsRasterLayer(_tif(tmp_path / "dem.tif", bands=1), "dem", "gdal")
     assert apply_default_resampling(layer) is True
-    assert _resamplers(layer) == ("bilinear", "bilinear")
+    assert _resamplers(layer) == ("bilinear", None)
 
 
 def test_a_palette_raster_keeps_nearest_neighbour(qgis_app, tmp_path):
@@ -74,6 +74,6 @@ def test_rasters_added_to_the_map_come_out_bilinear(qgis_app, tmp_path):
         time.sleep(0.02)
     assert done == [(2, [])]
     layers = {layer.name(): layer for layer in QgsProject.instance().mapLayers().values()}
-    assert _resamplers(layers["rgb"]) == ("bilinear", "bilinear")
+    assert _resamplers(layers["rgb"]) == ("bilinear", None)
     assert _resamplers(layers["classes"]) == (None, None)
     QgsProject.instance().clear()

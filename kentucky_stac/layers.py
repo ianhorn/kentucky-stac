@@ -246,9 +246,10 @@ def ensure_placed(layer: QgsMapLayer, bbox: Optional[Bbox]) -> bool:
 
 
 def apply_default_resampling(layer: QgsMapLayer) -> bool:
-    """Draw an imagery or elevation raster with bilinear resampling, zoomed in and out, which looks smoother than
-    QGIS's default nearest neighbour. A raster drawn from a palette (land cover classes, a scene classification
-    mask) keeps nearest neighbour, since averaging between class codes invents classes that aren't there.
+    """Draw an imagery or elevation raster with bilinear resampling when zoomed in, which looks smoother than
+    QGIS's default nearest neighbour. Zooming out is left at nearest neighbour. A raster drawn from a
+    palette (land cover classes, a scene classification mask) keeps nearest neighbour, since averaging
+    between class codes invents classes that aren't there.
     Returns True if bilinear was set."""
     if not isinstance(layer, QgsRasterLayer):
         return False
@@ -256,7 +257,6 @@ def apply_default_resampling(layer: QgsMapLayer) -> bool:
     if renderer is None or resample is None or renderer.type() == "paletted":
         return False
     resample.setZoomedInResampler(QgsBilinearRasterResampler())
-    resample.setZoomedOutResampler(QgsBilinearRasterResampler())
     return True
 
 
