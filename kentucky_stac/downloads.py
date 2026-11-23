@@ -11,7 +11,7 @@ import os
 import re
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 from qgis.core import QgsApplication, QgsBlockingNetworkRequest, QgsFileDownloader, QgsTask
@@ -67,8 +67,71 @@ def plan_downloads(items: Iterable[Item], lidar: bool, folder: str) -> Tuple[Lis
         bbox = bbox_2d(item.bbox)
         cfg = auth.cfg_for_source(item.source)
         auth.prepare_asset(asset.href, cfg)  # GDAL (file sizes, s3 downloads) gets the login for this file's host
-        jobs.setdefault(dest, DownloadJob(item.id, asset.href, dest, bbox, item, cfg))
+        # With a login, a Copernicus https address is read as the s3:// object it is, signed with the user's keys.
+        href = s3.as_s3(asset.href) if cfg else asset.href
+        jobs.setdefault(dest, DownloadJob(item.id, href, dest, bbox, item, cfg))
     return list(jobs.values()), missing
+
+
+def list_folder(url: str) -> Optional[List[Tuple[str, int]]]:
+    """(path inside the folder, size) of every file under an s3:// "folder", or None if `url` is an ordinary file.
+
+    A Sentinel-2 product (a `.SAFE`) is a folder of a hundred or so files on S3, not one object, so there is nothing
+    to fetch at its address; it is downloaded file by file."""
+    path = s3.vsis3_path(url)
+    return list_tree(path) if path else None
+
+
+def list_tree(vsi_path: str) -> Optional[List[Tuple[str, int]]]:
+    """(path relative to `vsi_path`, size) of every file below a GDAL virtual folder, or None if it isn't a folder.
+
+    The folder is listed straight away, never asked for as if it were a file: on S3 a "folder" is only a key prefix,
+    so asking for it as an object gets a 404, and GDAL then goes looking for the bucket on Amazon (where a bucket of
+    the same name, such as "eodata", may exist) and carries on against that instead of the real endpoint."""
+    from osgeo import gdal
+
+    setup_gdal()
+    base = vsi_path.rstrip("/")
+    files: List[Tuple[str, int]] = []
+    pending = [""]  # folders still to list, relative to `base`
+    listed_any = False
+    while pending:
+        here = pending.pop()
+        # ReadDir (not ReadDirRecursive, which first asks for the folder itself as a file) lists one level.
+        names = gdal.ReadDir(f"{base}/{here}".rstrip("/")) or []
+        listed_any = listed_any or bool(names)
+        for name in names:
+            name = name.replace("\\", "/").strip("/")
+            if name in ("", ".", "..") or "/" in name or "\\" in name:  # a name, never a path that could leave the folder
+                continue
+            relative = f"{here}/{name}" if here else name
+            # The listing that just returned this name already told GDAL whether it is a folder and how big it is.
+            info = gdal.VSIStatL(f"{base}/{relative}", gdal.VSI_STAT_NATURE_FLAG | gdal.VSI_STAT_SIZE_FLAG)
+            if info is not None and info.IsDirectory():
+                pending.append(relative)
+            else:
+                files.append((relative, int(info.size) if info is not None else 0))
+    return files if listed_any else None  # a plain file has nothing under it, and an empty folder nothing to fetch
+
+
+def expand_folders(
+    jobs: List[DownloadJob], folders: Dict[str, Optional[List[Tuple[str, int]]]]
+) -> Tuple[List[DownloadJob], Dict[str, Optional[int]]]:
+    """`jobs` with each folder job (one whose listing is in `folders`) replaced by a job per file inside it, written
+    under the folder's own destination, plus the size of each new file's URL."""
+    expanded: List[DownloadJob] = []
+    sizes: Dict[str, Optional[int]] = {}
+    for job in jobs:
+        listing = folders.get(job.url)
+        if listing is None:
+            expanded.append(job)
+            continue
+        base = job.url.rstrip("/")
+        for relative, size in listing:
+            url = f"{base}/{relative}"
+            expanded.append(replace(job, url=url, dest=os.path.join(job.dest, *relative.split("/"))))
+            sizes[url] = size
+    return expanded, sizes
 
 
 def _remove_when_free(path: str, attempts: int = 50, delay_ms: int = 100):
@@ -85,7 +148,8 @@ def _remove_when_free(path: str, attempts: int = 50, delay_ms: int = 100):
 
 _S3_HINT = (
     " (an s3:// file that isn't public needs AWS credentials: set AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY, "
-    "or create ~/.aws/credentials, then restart QGIS)"
+    "or create ~/.aws/credentials, then restart QGIS. For Copernicus Data Space, set your S3 keys as the source's "
+    "login under Sources...)"
 )
 
 
@@ -137,11 +201,25 @@ class SizesTask(QgsTask):
         self._authcfgs = authcfgs or {}
         self._callback = callback
         self.sizes: Dict[str, Optional[int]] = {}
+        self.folders: Dict[str, List[Tuple[str, int]]] = {}  # an s3 "folder" URL -> the files in it
+
+    def _lookup(self, url: str) -> Tuple[Optional[int], Optional[List[Tuple[str, int]]]]:
+        cfg = self._authcfgs.get(url, "")
+        if s3.is_s3(url) and (cfg or s3.credentials_available()):
+            try:
+                listing = list_folder(url)
+            except (ImportError, RuntimeError, ValueError, TypeError):  # GDAL raises RuntimeError
+                listing = None
+            if listing is not None:
+                return sum(size for _, size in listing), listing
+        return head_size(url, cfg), None
 
     def run(self) -> bool:
         with ThreadPoolExecutor(max_workers=SIZE_LOOKUP_WORKERS) as pool:
-            for url, size in zip(self._urls, pool.map(lambda u: head_size(u, self._authcfgs.get(u, "")), self._urls)):
+            for url, (size, listing) in zip(self._urls, pool.map(self._lookup, self._urls)):
                 self.sizes[url] = size
+                if listing is not None:
+                    self.folders[url] = listing
                 self.setProgress(100.0 * len(self.sizes) / len(self._urls))
                 if self.isCanceled():
                     return False
@@ -321,7 +399,8 @@ class DownloadManager(QObject):
                 error = f"could not save the file: {e}"
         elif not self._cancelled:
             error = "; ".join(state.errors) or "download did not complete"
-            if s3.is_s3(job.url) and not state.signed:
+            # An s3:// address, or Copernicus's https form of one, fetched without keys: say what is needed.
+            if (s3.is_s3(job.url) or s3.as_s3(job.url) != job.url) and not state.signed:
                 error += _S3_HINT
         if error is None and state.completed:
             self._completed.append(job)

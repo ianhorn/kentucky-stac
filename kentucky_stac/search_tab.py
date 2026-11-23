@@ -56,6 +56,7 @@ from .downloads import (
     DownloadManager,
     SizesTask,
     default_concurrency,
+    expand_folders,
     filename_from_href,
     plan_downloads,
 )
@@ -1553,7 +1554,8 @@ class SearchTab(QWidget):
         self._download_files = [j.dest for j in jobs]
         self._download_bboxes = {j.dest: j.bbox for j in jobs}
         self._download_items = {j.dest: j.item for j in jobs}
-        todo = [j for j in jobs if not os.path.exists(j.dest)]
+        # A folder (a Sentinel-2 .SAFE) that already exists may be half there: its files are checked one by one later.
+        todo = [j for j in jobs if not os.path.exists(j.dest) or os.path.isdir(j.dest)]
         notes = []
         if missing:
             notes.append(f"{len(missing)} tile{'s have' if len(missing) != 1 else ' has'} nothing to download")
@@ -1573,7 +1575,7 @@ class SearchTab(QWidget):
         QgsApplication.taskManager().addTask(self._size_task)
 
     def _on_sizes(self, todo: List[DownloadJob], sizes: Dict[str, Optional[int]]):
-        self._size_task = None
+        task, self._size_task = self._size_task, None
         self._show_sizes(sizes)
         self.results_status.setText(self._results_message or "")
         known = [sizes.get(j.url) for j in todo]
@@ -1582,11 +1584,19 @@ class SearchTab(QWidget):
         size_text = format_size(total) if total else "unknown size"
         if total and unknown:
             size_text += f" plus {unknown} of unknown size"
-        if not self._confirm_download(f"Download {len(todo)} file{'s' if len(todo) != 1 else ''} ({size_text})?"):
+        # An s3 "folder" (a Sentinel-2 .SAFE product) is downloaded file by file; skip files already on disk.
+        jobs, file_sizes = expand_folders(todo, getattr(task, "folders", {}))
+        sizes = {**sizes, **file_sizes}
+        jobs = [j for j in jobs if not os.path.exists(j.dest)]
+        if not jobs:
+            self._info("Nothing new to download: everything is already in that folder.")
+            self._finish_download_run([], [], False)
+            return
+        if not self._confirm_download(f"Download {len(jobs)} file{'s' if len(jobs) != 1 else ''} ({size_text})?"):
             self._download_filter, self._force_add_when_done = None, False
             self._update_add_enabled()
             return
-        self._begin_download(todo, sizes)
+        self._begin_download(jobs, sizes)
 
     def _confirm_download(self, text: str) -> bool:
         return QMessageBox.question(self, "Download tiles", text) == QMessageBox.StandardButton.Yes

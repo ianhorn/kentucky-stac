@@ -22,6 +22,7 @@ from qgis.core import QgsApplication, QgsAuthMethodConfig
 from qgis.PyQt.QtCore import QUrl
 from qgis.PyQt.QtNetwork import QNetworkRequest
 
+from . import s3
 from .sources import ApiSource, normalize_url
 
 _by_source: Dict[str, str] = {}  # normalised API base URL -> authentication config id
@@ -88,16 +89,24 @@ def prepare_asset(href: str, cfg: str) -> None:
         return
     from osgeo import gdal
 
-    parsed = urllib.parse.urlparse(href)
+    parsed = urllib.parse.urlparse(s3.as_s3(href))  # Copernicus's https form is read as its s3:// address, with keys
     if parsed.scheme.lower() == "s3":
         keys = _aws_keys(cfg)
         if keys is None:
             return
-        prefix = f"/vsis3/{parsed.netloc}/"
-        gdal.SetPathSpecificOption(prefix, "AWS_ACCESS_KEY_ID", keys[0])
-        gdal.SetPathSpecificOption(prefix, "AWS_SECRET_ACCESS_KEY", keys[1])
-        gdal.SetPathSpecificOption(prefix, "AWS_REQUEST_PAYER", "requester")
-        gdal.SetPathSpecificOption(prefix, "AWS_REGION", keys[2] or None)  # None clears a region left by another login
+        endpoint = s3.endpoint_for(parsed.netloc)
+        # GDAL looks a file's settings up under "/vsis3/bucket/key" but a folder listing's under plain "/vsis3/bucket",
+        # so both spellings of the bucket's prefix get them (a listing without the keys or endpoint goes to Amazon).
+        for prefix in (f"/vsis3/{parsed.netloc}/", f"/vsis3/{parsed.netloc}"):
+            gdal.SetPathSpecificOption(prefix, "AWS_ACCESS_KEY_ID", keys[0])
+            gdal.SetPathSpecificOption(prefix, "AWS_SECRET_ACCESS_KEY", keys[1])
+            gdal.SetPathSpecificOption(prefix, "AWS_REGION", keys[2] or None)  # None clears a region left by another login
+            if endpoint:  # an S3-compatible service (Copernicus): its own host, path style, no requester-pays header
+                for name, value in s3.endpoint_options(endpoint).items():
+                    gdal.SetPathSpecificOption(prefix, name, value)
+                gdal.SetPathSpecificOption(prefix, "AWS_REQUEST_PAYER", "")
+            else:
+                gdal.SetPathSpecificOption(prefix, "AWS_REQUEST_PAYER", "requester")
         return
     if parsed.scheme.lower() in ("http", "https") and parsed.netloc:
         headers = _headers_for(href, cfg)
