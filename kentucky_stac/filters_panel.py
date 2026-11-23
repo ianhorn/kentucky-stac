@@ -34,6 +34,9 @@ class FiltersPanel(QWidget):
     def __init__(self, lidar: bool, parent=None):
         super().__init__(parent)
         today = QDate.currentDate()
+        # Cloud cover means nothing for a point cloud. A fixed fact about the tab, not asked of Qt: a checkbox inside
+        # the collapsed Filters section reports itself as not visible, and the filter was silently dropped.
+        self._has_cloud_cover = not lidar
 
         self.header = QToolButton()
         self.header.setCheckable(True)
@@ -135,7 +138,7 @@ class FiltersPanel(QWidget):
         return (
             int(self.from_check.isChecked())
             + int(self.to_check.isChecked())
-            + int(self.cloud_check.isChecked() and self.cloud_check.isVisibleTo(self))
+            + int(self.cloud_check.isChecked() and self._has_cloud_cover)
         )
 
     def _refresh_header(self):
@@ -173,7 +176,7 @@ class FiltersPanel(QWidget):
         if self.to_check.isChecked():
             d = self.to_date.date()
             query.end = datetime.combine(datetime(d.year(), d.month(), d.day()).date(), time(23, 59, 59))
-        if self.cloud_check.isChecked() and self.cloud_check.isVisibleTo(self):
+        if self.cloud_check.isChecked() and self._has_cloud_cover:
             query.max_cloud_cover = float(self.cloud_spin.value())
         query.sortby = _SORTS[self.sort_combo.currentIndex()][1]
         return query
