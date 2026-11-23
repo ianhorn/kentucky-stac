@@ -419,6 +419,20 @@
       <tr><td>A single sign-on login</td><td><strong>OAuth2</strong>, set up in QGIS in the usual way</td></tr>
       <tr><td>AWS keys for an <code>s3://</code> bucket</td><td><strong>AWS S3</strong> (a <strong>Basic</strong> configuration holding the access key ID and secret also works)</td></tr>
     </table>
+    <h3>Copernicus Data Space (Sentinel-2 files and products)</h3>
+    <p>Copernicus keeps Sentinel data on its own S3 service, and a free registered account can create <strong>S3 access keys</strong>
+      for it. Make a <strong>Basic</strong> configuration (the plain user name and password boxes) with the <strong>access key as the user name</strong> and the
+      <strong>secret key as the password</strong>, and set it as the login of the source that lists the data. With it:</p>
+    <ul>
+      <li>The band files of the Copernicus catalog (<code>s3://eodata/&hellip;</code>) can be added to the map, used in band combinations and downloaded. The plugin
+        sends them to Copernicus&rsquo;s own S3 address, not Amazon&rsquo;s.</li>
+      <li>A catalog that offers the <strong>whole product</strong> (a <code>.SAFE</code>, for example the <em>Full SAFE product</em> of the Super-Resolved Sentinel-2 API) can be
+        downloaded: a product is a folder of a hundred or so files, so the plugin lists it and downloads it file by file into a folder with the product&rsquo;s name, after
+        asking you to confirm the number of files and the total size. Files already there are skipped, so an interrupted download can be run again.</li>
+      <li>Without the keys, a Copernicus download says it needs them instead of only reporting &ldquo;Not Found&rdquo;.</li>
+    </ul>
+    <p>A catalog&rsquo;s <em>order</em> link is not a file. The Super-Resolved Sentinel-2 API&rsquo;s <code>sr</code> asset, for instance, is a request that spends credits on your account
+      with that service and returns the 2.5&nbsp;m imagery; the plugin does not send it.</p>
     <h3>Where the login goes</h3>
     <ul>
       <li>It goes with the plugin&rsquo;s own requests to that source: collections, searches, thumbnails, file sizes and downloads.</li>

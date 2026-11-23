@@ -15,7 +15,38 @@ from __future__ import annotations
 
 import os
 import urllib.parse
-from typing import Mapping, Optional, Tuple
+from typing import Dict, Mapping, Optional, Tuple
+
+# S3-compatible services that are not Amazon: bucket name -> endpoint, a host (https) or "http://host:port". Their
+# s3://bucket/key addresses must be read from that endpoint, not from AWS, and always with the user's keys.
+# Copernicus Data Space keeps all of Sentinel in the "eodata" bucket; its keys come with a (free) registered account.
+S3_ENDPOINTS: Dict[str, str] = {"eodata": "eodata.dataspace.copernicus.eu"}
+
+
+def endpoint_for(bucket: str) -> Optional[str]:
+    """The S3-compatible endpoint that serves `bucket`, or None for an ordinary AWS bucket."""
+    return S3_ENDPOINTS.get(bucket)
+
+
+def endpoint_options(endpoint: str) -> Dict[str, str]:
+    """The GDAL /vsis3/ settings that point it at an S3-compatible `endpoint`: path-style requests to that host."""
+    plain = endpoint.lower().startswith("http://")
+    host = endpoint.split("://", 1)[-1].rstrip("/")
+    return {"AWS_S3_ENDPOINT": host, "AWS_VIRTUAL_HOSTING": "FALSE", "AWS_HTTPS": "NO" if plain else "YES"}
+
+
+def as_s3(url: str) -> str:
+    """The s3:// form of an https address on an S3-compatible service (Copernicus: https://eodata.dataspace.copernicus.eu/
+    eodata/<key> is s3://eodata/<key>), so it is read with the user's keys. Any other URL comes back unchanged."""
+    parsed = urllib.parse.urlparse(url or "")
+    if parsed.scheme.lower() not in ("http", "https") or not parsed.netloc:
+        return url
+    for bucket, endpoint in S3_ENDPOINTS.items():
+        host = endpoint.split("://", 1)[-1].rstrip("/")
+        prefix = f"/{bucket}/"
+        if parsed.netloc.lower() == host.lower() and (parsed.path.startswith(prefix) or parsed.path == f"/{bucket}"):
+            return f"s3://{bucket}/{parsed.path[len(prefix):]}" if parsed.path.startswith(prefix) else f"s3://{bucket}/"
+    return url
 
 
 def is_s3(url: str) -> bool:
@@ -41,6 +72,10 @@ def to_https(url: str) -> str:
         return url
     bucket, key = parts
     quoted = urllib.parse.quote(key, safe="/")
+    endpoint = endpoint_for(bucket)
+    if endpoint:  # an S3-compatible service: path style at its own host (a public object is rare there)
+        scheme = "http" if endpoint.lower().startswith("http://") else "https"
+        return f"{scheme}://{endpoint.split('://', 1)[-1].rstrip('/')}/{bucket}/{quoted}"
     if "." in bucket:
         return f"https://s3.amazonaws.com/{bucket}/{quoted}"
     return f"https://{bucket}.s3.amazonaws.com/{quoted}"
