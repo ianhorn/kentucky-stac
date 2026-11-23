@@ -419,10 +419,35 @@
       <tr><td>A single sign-on login</td><td><strong>OAuth2</strong>, set up in QGIS in the usual way</td></tr>
       <tr><td>AWS keys for an <code>s3://</code> bucket</td><td><strong>AWS S3</strong> (a <strong>Basic</strong> configuration holding the access key ID and secret also works)</td></tr>
     </table>
+    <h3 id="s3-keys">Adding S3 credentials</h3>
+    <p>Files at an <code>s3://</code> address need an <strong>access key</strong> and a <strong>secret key</strong>. Copernicus Data Space (Sentinel-2) is the usual case; a private
+      Amazon bucket is another. You enter the pair once, in QGIS, and attach it to the source.</p>
+    <ol>
+      <li><strong>Get the keys.</strong> For Copernicus, sign in to your free Copernicus Data Space account and create <strong>S3 access keys</strong> there. You get an access key
+        and a secret key; the secret is shown only once, so copy it when it appears.</li>
+      <li>In the plugin, open <strong>Sources&hellip;</strong>, select the source in the <em>Active sources</em> list (for example <em>Super-Resolved Sentinel-2 2.5m STAC API</em> or
+        <em>Copernicus Data Space</em>) and press <strong>Login&hellip;</strong>.</li>
+      <li>In the <em>Login for &hellip;</em> window press the green <strong>+</strong> beside the selector. QGIS asks for its master password the first time.</li>
+      <li>In <em>Add or Edit Authentication Configuration</em>:
+        <ul>
+          <li><strong>Name:</strong> anything you like, such as <code>Copernicus S3</code>.</li>
+          <li>Set the type (the drop-down under <em>Resource</em>) to <strong>AWS S3</strong>.</li>
+          <li><strong>Username:</strong> your <strong>access key</strong>.</li>
+          <li><strong>Password:</strong> your <strong>secret key</strong>.</li>
+          <li><strong>Region:</strong> <code>default</code> for Copernicus. If a download is refused with a message about the signature not matching, try <code>us-east-1</code>.
+            For an Amazon bucket, use that bucket&rsquo;s region.</li>
+        </ul>
+        Press <strong>Save</strong>.</li>
+      <li>Back in the <em>Login for &hellip;</em> window the new configuration is selected. Press <strong>OK</strong>. The source now shows <em>(login set)</em> in the list.</li>
+    </ol>
+    <p>The login is used for that source&rsquo;s <code>s3://</code> files only, and goes only to the bucket they are in. The keys stay in QGIS&rsquo;s encrypted Authentication database;
+      the plugin keeps just the configuration&rsquo;s id. To change or remove the keys, edit the configuration under <em>Settings &rarr; Options &rarr; Authentication</em>, or choose
+      <em>No Authentication</em> in the <em>Login for &hellip;</em> window. A <strong>Basic</strong> configuration (user name = access key, password = secret key) also works.</p>
+    <p><strong>If it doesn&rsquo;t work:</strong> a <em>Not Found</em> on a Copernicus address, or a message that the files need your S3 keys, means no login is set on that source. <em>Access denied</em>
+      means the keys are wrong, expired or for a different service: create a new pair and edit the configuration. Only Copernicus&rsquo;s S3 service and Amazon S3 are supported; keys for another
+      S3-compatible service can&rsquo;t be used yet.</p>
     <h3>Copernicus Data Space (Sentinel-2 files and products)</h3>
-    <p>Copernicus keeps Sentinel data on its own S3 service, and a free registered account can create <strong>S3 access keys</strong>
-      for it. Make a <strong>Basic</strong> configuration (the plain user name and password boxes) with the <strong>access key as the user name</strong> and the
-      <strong>secret key as the password</strong>, and set it as the login of the source that lists the data. With it:</p>
+    <p>With your S3 keys set as the source&rsquo;s login (see <a href="#s3-keys">Adding S3 credentials</a>):</p>
     <ul>
       <li>The band files of the Copernicus catalog (<code>s3://eodata/&hellip;</code>) can be added to the map, used in band combinations and downloaded. The plugin
         sends them to Copernicus&rsquo;s own S3 address, not Amazon&rsquo;s.</li>
