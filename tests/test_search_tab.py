@@ -13,7 +13,6 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from qgis.core import (  # noqa: E402
     Qgis,
-    QgsApplication,
     QgsCoordinateReferenceSystem,
     QgsGeometry,
     QgsProject,
@@ -26,14 +25,6 @@ from kentucky_stac.stac import Asset, Collection, Item  # noqa: E402
 
 OTHER = ApiSource("Other API", "https://other.example/stac")
 POLYGON = "POLYGON((-85 37, -84 37, -84 38, -85 38, -85 37))"
-
-
-@pytest.fixture(scope="session")
-def qgis_app():
-    app = QgsApplication([], False)
-    app.initQgis()
-    yield app
-    app.exitQgis()
 
 
 class FakeBar:
